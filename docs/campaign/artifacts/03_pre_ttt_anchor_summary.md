@@ -69,20 +69,27 @@ SDPA uses (B, H, T, D) tensor layout vs donor's flash_attn_3 (B, T, H, D). XSA a
 
 ## Bottleneck Analysis
 
-The primary bottleneck is **throughput**: 91.37 ms/step vs donor's ~85 ms/step. This results in 487 fewer steps in 600s, which accounts for the 0.0042 BPB gap.
+This run validates the anchor. The remaining donor gap is small enough that the next step should be a narrow delta sweep, not a redesign.
 
-Root cause: SDPA dispatches to FlashAttention-2 kernels. The donor uses FlashAttention-3 (`flash_attn_3_func`) which has Hopper-specific warp-specialization and asynchronous softmax. Additionally, SDPA requires a transpose for XSA compatibility that FA3 avoids natively.
+What the run says clearly:
 
-The `math=True` SDP fallback (now fixed in commit 563700f) may also contribute marginally.
+- The Session 03 port is real: final sliding `val_bpb=1.12904446` is far better than the root `8xH100` baseline and close to the donor.
+- Throughput is one plausible bottleneck: `91.37 ms` vs donor `~85 ms` leaves a `487` step deficit in the same wallclock.
+- Export fidelity still matters: pre-quant EMA `1.14472403` to int6 roundtrip `1.15247273` is a `+0.00774870` gap, so not all remaining headroom should be assigned to throughput alone.
 
-Model fidelity is confirmed: the port is faithful. The 0.0042 gap is entirely explainable by step count.
+Conclusion:
+
+- Treat backend/perf and export/model changes as separate measurements.
+- Do not assume the entire `+0.0042` donor gap is explained by step count alone.
 
 ## Next Recommended Delta
 
-**Session 04: FlashAttention-3 + GPTQ-lite (narrow, isolated)**
+**Session 04: targeted delta sweep, one change per run**
 
-1. **FA3 integration**: Switch from SDPA to `flash_attn_func`. Expected gain: ~6ms/step → ~480 more steps → ~0.003 BPB. This also eliminates the XSA transpose overhead.
-2. **GPTQ-lite clip search**: Better int6 quantization scales. Expected gain: 0.002-0.005 BPB post-quant.
-3. **LeakyReLU²**: 1-line activation change used by the current #1 (1.1194). Expected gain: 0.001-0.003 BPB.
+Recommended order:
 
-Each delta should be tested in isolation before stacking.
+1. **GPTQ-lite clip search** as the first export-side delta. The current roundtrip gap is large enough to justify a clean post-training quantization refinement run.
+2. **LeakyReLU²** as the first cheap model-side delta. It is simple, public, and easy to attribute.
+3. **One small schedule or token-path tweak** (`warmdown`/EMA threshold or one bigram/smear change), only after the first two are measured.
+
+If throughput becomes the dominant concern, benchmark backend/perf parity as its own control. Do not stack backend, export, and model changes in the same Session 04 run.

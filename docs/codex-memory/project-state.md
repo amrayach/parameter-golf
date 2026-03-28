@@ -73,18 +73,19 @@ Do not use:
 - first challenge-shaped root baseline on real `8xH100`
 - Session 03 pre-TTT anchor port: sliding s64 val_bpb `1.12904446` on `8xH100`
 - int6+zstd roundtrip under the 16MB cap with `248676` bytes headroom
-- throughput bottleneck identified: SDPA vs FA3, not model fidelity
+- small remaining donor gap with both throughput and export fidelity still worth isolated measurement
 - NGC container + fscratch confirmed as optimized Pegasus path
 
 ## What has not happened yet
 
-- no FA3 integration (primary throughput unlock)
+- no isolated Session 04 backend/perf parity measurement
 - no GPTQ-lite compression delta
 - no LeakyReLU^2 activation delta
+- no isolated warmdown/EMA or token-path delta on top of the anchor
 - no top-tier leaderboard-adjacent result yet
 
 ## Best next move
 
 - start a fresh Codex session from `docs/codex-memory/BOOTSTRAP.md`
-- execute Session 04: FA3 integration, GPTQ-lite, LeakyReLU^2 as isolated deltas
-- focus on throughput unlock (FA3) as the highest-leverage single change
+- execute Session 04 as a narrow delta sweep on top of the Session 03 anchor
+- keep backend/perf, export, and model changes isolated so the next result stays attributable

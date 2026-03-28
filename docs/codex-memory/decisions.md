@@ -11,13 +11,14 @@
 
 - The root `8xH100` baseline is now the fixed reference point.
 - The next `8xH100` runs must be actual model changes.
-- Session 03 pre-TTT anchor work is complete. Session 04 isolated deltas are the current mainline.
+- Session 03 pre-TTT anchor work is complete at `val_bpb=1.12904446` (sliding s64) on Pegasus `8xH100`.
+- Session 04 targeted delta sweep is the current mainline.
 
 ## Session 03 decisions
 
 - Session 03 anchor uses SDPA not FA3. The donor record used `flash_attn_3_func`, but the anchor port kept `scaled_dot_product_attention` to avoid introducing an untested kernel dependency in the first anchor run. This is a deliberate conservatism, not an oversight.
 - NTK RoPE with `train_seq_len=1024` confirmed as deliberate. The anchor sets `rope_train_seq_len=1024` for NTK-aware scaling even though `TRAIN_SEQ_LEN=2048`. This is intentional and matches the donor record behavior.
-- Throughput is the primary bottleneck, not model fidelity. Session 03 achieved `91.37 ms/step` with SDPA versus the root baseline's `51.66 ms/step`. The anchor's per-step quality is higher, but it gets fewer steps in 600s (`6564` vs `11611`). FA3 is the single highest-leverage unlock.
+- Throughput is a plausible bottleneck, but not the only remaining gap. Session 03 finished at `91.37 ms/step`, but the pre-quant to roundtrip gap (`1.14472403 -> 1.15247273`) means export-side work still deserves isolated measurement.
 - NGC container + fscratch confirmed as optimized Pegasus path. The NGC 26.03 container with `/fscratch` for data staging avoids `/netscratch` I/O bottlenecks and resolves OOM issues from container-level overhead.
 
 ## Hardware
@@ -32,6 +33,7 @@
 - Do not modify existing public record folders
 - Document every run with manifests and experiment summaries
 - Prefer additive, well-understood public techniques over speculative novelty
+- Keep Session 04 deliberately narrow: one isolated delta per run, no stacked backend/export/model bundles
 
 ## Hard gates
 

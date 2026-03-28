@@ -4,14 +4,14 @@ Date: 2026-03-28
 
 ## Current Objective
 
-Start the competition phase from a verified `8xH100` root baseline on Pegasus.
+Use the completed Session 03 anchor as the new competition-phase reference on Pegasus.
 
-The immediate goal is no longer baseline bring-up. The immediate goal is to spend available `8xH100` time on the first real model changes, starting with the Session 03 pre-TTT anchor path.
+The immediate goal is no longer anchor bring-up. The immediate goal is to run a narrow Session 04 delta sweep on top of the measured Session 03 anchor, with one attributable change per run.
 
 ## In Scope
 
-- Port or reconstruct the strongest clean pre-TTT anchor into a self-contained competition branch or record folder
-- Use the verified Pegasus `8xH100` Slurm-native launch path for real model changes
+- Keep the measured Session 03 anchor as the fixed competition reference
+- Use the verified Pegasus `8xH100` Slurm-native launch path for isolated Session 04 deltas
 - Preserve exact launcher, artifact, and metric logging discipline from the baseline phase
 - Submit or update the compute request using the current evidence package when useful
 
@@ -21,7 +21,8 @@ The immediate goal is no longer baseline bring-up. The immediate goal is to spen
 - More root-baseline reruns unless needed for variance
 - Treating RFN as the mainline strategy
 - Spending RunPod budget except for final validation later
-- Arbitrary trainer edits unrelated to the anchor port or a tightly scoped comparison
+- Stacking multiple backend, export, and model changes into one unattributable run
+- Arbitrary trainer edits unrelated to a tightly scoped comparison
 
 ## Current Hardware Stance
 
@@ -42,13 +43,15 @@ The immediate goal is no longer baseline bring-up. The immediate goal is to spen
 - A100 `600s` warmdown-only variant: complete
 - `1xH100` `600s` root baseline: complete
 - `8xH100` `600s` root baseline: complete
+- Session 03 pre-TTT anchor run: complete
 - Current best measured A100 result: root baseline (`val_bpb=1.37140771`)
 - Current best measured H100 result: `1xH100` root baseline (`val_bpb=1.30594735`)
-- Current best measured `8xH100` result: root baseline (`val_bpb=1.23368511`)
+- Current best measured `8xH100` baseline/reference: root baseline (`val_bpb=1.23368511`)
+- Current best measured `8xH100` competition result: Session 03 anchor sliding s64 (`val_bpb=1.12904446`)
 - Baseline seed spread on A100 is small (`+0.00319322` BPB from seed `1337` to seed `42`)
 - `8xH100` launch via `torchrun --standalone` is blocked by rendezvous timeout on `serv-3342`
 - `8xH100` launch via Slurm-native `srun` works on `serv-3342`
-- Immediate next deliverable: Session 03 competition-phase handoff and first anchor-change run, not more baseline reruns
+- Immediate next deliverable: Session 04 targeted delta sweep, not more baseline reruns or broad novelty stacks
 
 ## Canonical Workspaces
 
@@ -213,30 +216,62 @@ Interpretation:
 - Slurm-native `srun --ntasks=8 --gpus-per-task=1 --gpu-bind=none` is currently the working launch path for `8xH100` jobs on Pegasus.
 - The root baseline is now challenge-shaped and reproducibly under the artifact cap on real `8xH100`.
 
+Date: 2026-03-28
+Node: `serv-3342`
+GPU: `8x NVIDIA H100 80GB HBM3 (SXM5)`
+Run: `pre_ttt_anchor_8xh100_600s`
+
+Measured outputs:
+
+- Train setup: `600s` wallclock cap, Session 03 pre-TTT anchor
+- `amp_dtype: bf16`
+- Stopped at `6564` steps in `599759 ms`
+- Pre-quant EMA exact eval: `val_loss=1.93281857`, `val_bpb=1.14472403`
+- Post-roundtrip exact eval: `val_loss=1.94590192`, `val_bpb=1.15247273`
+- Sliding-window exact eval (`stride=64`): `val_loss=1.90633923`, `val_bpb=1.12904446`
+- Step average: `91.37 ms`
+- Peak memory: `21274 MiB allocated`, `22070 MiB reserved`
+- Total submission size `int6+zstd`: `15751324` bytes
+- Model bytes: `15692752`, code bytes: `58572`
+
+Interpretation:
+
+- This is the first real competition-phase architecture result on Pegasus `8xH100`.
+- The Session 03 anchor improves on the root `8xH100` baseline by `0.10464065` BPB on the final sliding metric.
+- The remaining gap to the public 2026-03-21 donor is small enough to justify narrow Session 04 deltas rather than a redesign.
+- Throughput is one plausible contributor to the residual gap, but export fidelity also remains worth isolated measurement.
+
 ## Next Actions
 
-### 1. Freeze the baseline facts
+### 1. Freeze the Session 03 facts
 
 - Root `8xH100` baseline is the reference point:
   - `val_bpb=1.23368511`
   - `step_avg=51.66 ms`
   - `artifact=15871532 bytes`
+- Session 03 anchor is the new competition reference:
+  - sliding s64 `val_bpb=1.12904446`
+  - roundtrip `val_bpb=1.15247273`
+  - pre-quant EMA `val_bpb=1.14472403`
+  - `step_avg=91.37 ms`
+  - `artifact=15751324 bytes`
 - Launcher lesson is locked:
   - do not use `torchrun --standalone` on Pegasus `8xH100`
   - use Slurm-native `srun --gpu-bind=none` with `LOCAL_RANK=$SLURM_LOCALID`, `RANK=$SLURM_PROCID`, `WORLD_SIZE=$SLURM_NTASKS`
 
-### 2. Start the competition phase
+### 2. Start Session 04 targeted deltas
 
-First real move:
+Next moves:
 
-- Execute Session 03 pre-TTT anchor port work
-- Keep the first `8xH100` competition run to one coherent change set, not a grab bag
+- Read `docs/campaign/artifacts/03_pre_ttt_anchor_summary.md`
+- Choose at most three cheap, high-signal deltas
+- Measure each delta in isolation on top of the Session 03 anchor
 - Save all new runs as additive artifacts with exact commands and logs
 
 ### 3. Grant/application stance
 
 - Current evidence is already strong enough for a fresh `Development grant` request.
-- Consider a higher tier only after a clearly improved `8xH100` run that is genuinely leaderboard-adjacent.
+- Consider a higher tier only after an isolated delta materially improves on `1.12904446`.
 
 ## Evidence Required From Each Run
 
@@ -261,6 +296,7 @@ The evidence package is now:
 - `8xH100` `torchrun --standalone` rendezvous blocker
 - `8xH100` Slurm-native NCCL smoke success
 - `8xH100` Slurm-native trainer success
+- `8xH100` Session 03 anchor success
 
 Do not spend more time on repeated `torchrun --standalone` retries or more root-baseline reruns.
-If a fresh session starts now, it should begin from the verified `8xH100` baseline and move immediately into actual model changes.
+If a fresh session starts now, it should begin from the measured Session 03 anchor and make one isolated Session 04 change.
