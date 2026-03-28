@@ -85,6 +85,31 @@ class Hyperparameters:
     beta2 = float(os.environ.get("BETA2", 0.95))
     adam_eps = float(os.environ.get("ADAM_EPS", 1e-8))
     grad_clip_norm = float(os.environ.get("GRAD_CLIP_NORM", 0.0))
+    amp_dtype = os.environ.get("AMP_DTYPE", "auto").strip().lower()
+
+
+LOWP_DTYPE = torch.bfloat16
+
+
+def resolve_amp_dtype(amp_dtype_name: str) -> torch.dtype:
+    name = amp_dtype_name.strip().lower()
+    if name not in {"auto", "bf16", "fp16"}:
+        raise ValueError(f"AMP_DTYPE must be one of auto, bf16, fp16; got {amp_dtype_name!r}")
+    if name == "fp16":
+        return torch.float16
+    if name == "bf16":
+        if not torch.cuda.is_bf16_supported():
+            raise RuntimeError("AMP_DTYPE=bf16 requested, but this CUDA device does not support bfloat16")
+        return torch.bfloat16
+    return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+
+
+def amp_dtype_name(dtype: torch.dtype) -> str:
+    if dtype == torch.bfloat16:
+        return "bf16"
+    if dtype == torch.float16:
+        return "fp16"
+    return str(dtype).removeprefix("torch.")
 
 # -----------------------------
 # MUON OPTIMIZER 
@@ -97,7 +122,7 @@ def zeropower_via_newtonschulz5(G: Tensor, steps: int = 10, eps: float = 1e-7) -
     # Orthogonalize a 2D update matrix with a fast Newton-Schulz iteration.
     # Muon uses this to normalize matrix-shaped gradients before applying them.
     a, b, c = (3.4445, -4.7750, 2.0315)
-    X = G.bfloat16()
+    X = G.to(dtype=LOWP_DTYPE)
     X /= X.norm() + eps
     transposed = G.size(0) > G.size(1)
     if transposed:
@@ -137,7 +162,7 @@ class Muon(torch.optim.Optimizer):
             nesterov = group["nesterov"]
 
             total_params = sum(int(p.numel()) for p in params)
-            updates_flat = torch.zeros(total_params, device=params[0].device, dtype=torch.bfloat16)
+            updates_flat = torch.zeros(total_params, device=params[0].device, dtype=LOWP_DTYPE)
 
             curr = 0
             for i, p in enumerate(params):
@@ -255,7 +280,7 @@ def eval_val(
             local = val_tokens[raw_start:raw_end].to(device=device, dtype=torch.int64, non_blocking=True)
             x = local[:-1].reshape(-1, args.train_seq_len)
             y = local[1:].reshape(-1, args.train_seq_len)
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
+            with torch.autocast(device_type="cuda", dtype=LOWP_DTYPE, enabled=True):
                 batch_loss = model(x, y).detach()
             batch_token_count = float(y.numel())
             val_loss_sum += batch_loss.to(torch.float64) * batch_token_count
@@ -313,7 +338,7 @@ def tensor_nbytes(t: Tensor) -> int:
 def keep_float_tensor(name: str, t: Tensor, passthrough_orig_dtypes: dict[str, str]) -> Tensor:
     if any(pattern in name for pattern in INT8_KEEP_FLOAT_FP32_NAME_PATTERNS):
         return t.float().contiguous()
-    if t.dtype in {torch.float32, torch.bfloat16}:
+    if t.dtype in {torch.float32, torch.bfloat16, torch.float16}:
         passthrough_orig_dtypes[name] = str(t.dtype).removeprefix("torch.")
         return t.to(dtype=INT8_KEEP_FLOAT_STORE_DTYPE).contiguous()
     return t
@@ -729,11 +754,10 @@ class GPT(nn.Module):
 # -----------------------------
 
 def main() -> None:
-    global zeropower_via_newtonschulz5
+    global zeropower_via_newtonschulz5, LOWP_DTYPE
 
     code = Path(__file__).read_text(encoding="utf-8")
     args = Hyperparameters()
-    zeropower_via_newtonschulz5 = torch.compile(zeropower_via_newtonschulz5)
 
     # -----------------------------
     # DISTRIBUTED + CUDA SETUP
@@ -753,6 +777,8 @@ def main() -> None:
         raise RuntimeError("CUDA is required")
     device = torch.device("cuda", local_rank)
     torch.cuda.set_device(device)
+    LOWP_DTYPE = resolve_amp_dtype(args.amp_dtype)
+    zeropower_via_newtonschulz5 = torch.compile(zeropower_via_newtonschulz5)
     if distributed:
         dist.init_process_group(backend="nccl", device_id=device)
         dist.barrier()
@@ -766,7 +792,7 @@ def main() -> None:
     enable_cudnn_sdp(False)
     enable_flash_sdp(True)
     enable_mem_efficient_sdp(False)
-    enable_math_sdp(False)
+    enable_math_sdp(True)
 
     logfile = None
     if master_process:
@@ -835,7 +861,7 @@ def main() -> None:
         logit_softcap=args.logit_softcap,
         rope_base=args.rope_base,
         qk_gain_init=args.qk_gain_init,
-    ).to(device).bfloat16()
+    ).to(device=device, dtype=LOWP_DTYPE)
     for module in base_model.modules():
         if isinstance(module, CastedLinear):
             module.float()
@@ -895,7 +921,8 @@ def main() -> None:
     n_params = sum(p.numel() for p in base_model.parameters())
     log0(f"model_params:{n_params}")
     log0(f"world_size:{world_size} grad_accum_steps:{grad_accum_steps}")
-    log0("sdp_backends:cudnn=False flash=True mem_efficient=False math=False")
+    log0(f"amp_dtype:{amp_dtype_name(LOWP_DTYPE)} bf16_supported:{torch.cuda.is_bf16_supported()}")
+    log0("sdp_backends:cudnn=False flash=True mem_efficient=False math=True")
     log0(f"attention_mode:gqa num_heads:{args.num_heads} num_kv_heads:{args.num_kv_heads}")
     log0(
         f"tie_embeddings:{args.tie_embeddings} embed_lr:{token_lr} "
@@ -944,7 +971,7 @@ def main() -> None:
                 if distributed:
                     model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
                 x, y = train_loader.next_batch(args.train_batch_tokens, args.train_seq_len, grad_accum_steps)
-                with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
+                with torch.autocast(device_type="cuda", dtype=LOWP_DTYPE, enabled=True):
                     warmup_loss = model(x, y)
                 (warmup_loss * grad_scale).backward()
             for opt in optimizers:
@@ -1012,7 +1039,7 @@ def main() -> None:
             if distributed:
                 model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
             x, y = train_loader.next_batch(args.train_batch_tokens, args.train_seq_len, grad_accum_steps)
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
+            with torch.autocast(device_type="cuda", dtype=LOWP_DTYPE, enabled=True):
                 loss = model(x, y)
             train_loss += loss.detach()
             (loss * grad_scale).backward()
