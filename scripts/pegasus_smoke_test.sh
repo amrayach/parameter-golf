@@ -50,6 +50,7 @@ srun -K \
     --ntasks=1 \
     --gpus-per-task=1 \
     --cpus-per-task=6 \
+    --mem=64G \
     --time=00:20:00 \
     ${CONTAINER_ARGS} \
     bash -c '
