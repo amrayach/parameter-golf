@@ -985,7 +985,7 @@ def main() -> None:
 
     enable_flash_sdp(True)
     enable_mem_efficient_sdp(False)
-    enable_math_sdp(True)
+    enable_math_sdp(False)
 
     logfile = None
     if master_process:
