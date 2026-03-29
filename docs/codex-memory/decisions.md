@@ -26,6 +26,7 @@
 
 - Pegasus `8xH100` is now the primary execution base.
 - Launch Pegasus multi-GPU work with Slurm-native `srun`, not `torchrun --standalone`.
+- Force `--nodes=1` on challenge-shaped `8xH100` runs.
 - RunPod stays reserved for final validation or granted credits.
 
 ## Workflow
@@ -35,6 +36,8 @@
 - Document every run with manifests and experiment summaries
 - Prefer additive, well-understood public techniques over speculative novelty
 - Keep Session 04 deliberately narrow: one isolated delta per run, no stacked backend/export/model bundles
+- Do not use `| tail -1` on Pegasus training jobs.
+- Use `PYTHONUNBUFFERED=1` or `python -u` for Pegasus logs.
 
 ## Session 04 decisions
 
@@ -44,9 +47,11 @@
 
 ## Session 05 decisions
 
-- TTT is now back in scope because the pre-TTT anchor exists and Session 04 has finished.
-- TTT should be treated as necessary but not sufficient from the current anchor; the local `1.1194` record has pre-TTT base `1.1218`, so stronger pre-TTT work is still required.
+- TTT is parked as an execution target until Phase 1 (FA3) and Phase 2 (Full Hessian GPTQ) are measured.
+- The legality audit remains useful background, but current execution focus is stronger pre-TTT base + throughput.
 - FA3 is back in scope as a deliberate Session 05 throughput investigation, not as an anchor bring-up risk.
+- The current saved-container FA3 runtime is rejected as a throughput path. It is slower and worse than the Session 03 anchor.
+- Any further FA3 work is gated on vendor-tuned NGC runtime compatibility.
 
 ### Session 05 audit decisions (2026-03-29)
 
@@ -57,6 +62,23 @@
 5. **LeakyReLU² re-test is gated on FA3** — the throughput-coupling hypothesis (Session 04 Delta 2 neutrality caused by +0.72ms eating training steps) must be tested, not assumed.
 6. **Lane A (isolated deltas) is the default** — switch to Lane B (bundled reproduction) only if time pressure or slow progress demands it.
 7. **Score-first TTT appears compliant** — matches PR #461 public precedent; torch.inference_mode() guards provide hard scoring-phase statefulness guarantee. Not a formal ruling.
+8. **FA3 microbenchmark is sufficient to justify FW-1** — direct FA3 on `25.02` + wheel beat SDPA flash by `11.44x` in the isolated attention benchmark. This is kernel-only evidence, not an end-to-end training claim.
+9. **Container split is now explicit** — keep NGC `26.03` as the standard stable path, but use the saved Pegasus `25.02` FA3 container for the explicit FA3 experiment path.
+10. **No ad hoc FA3 job installs once the container exists** — build `/netscratch/$USER/containers/pytorch_25.02_fa3.sqsh` once, then reuse it.
+11. **`--no-deps` is rejected for FA3 on stock 25.02** — the import fails against the bundled PyTorch ABI (`aoti_torch_abi_version` missing).
+12. **Keep the exact FA3 wheel filename** — shortened wheel names break pip compatibility parsing.
+13. **Current saved-container FA3 path is a clean negative result** — `92.67 ms/step` and sliding s64 `1.12958984` are both worse than the anchor (`91.37 ms`, `1.12904446`). Do not rerun it as-is.
+14. **The packaging problem is part of the research problem** — the microbenchmark win did not survive replacing the vendor-tuned NGC torch stack with the pip-installed generic stack.
+
+## Session 05b decisions
+
+- Full Hessian GPTQ selected as Phase 2 implementation target based on competitive analysis: all 4 top PRs (#634, #1019, #1060, #1072) use the same core GPTQ algorithm with identical hyperparameters (block_size=128, percdamp=0.01, actorder=True).
+- Post-training calibration (not online accumulation) chosen as the Hessian collection method — simpler, proven in PRs #634 and #1060.
+- 128 calibration sequences from training data (not validation) — matches prompt budget, avoids leakage.
+- `clip_percentiles=[1.0]` only (row-max, no multi-percentile search) — conservative choice to avoid the artifact size blowup that killed GPTQ-lite in Session 04 Delta 1.
+- Export path restructured for rank-0-only GPTQ: Hessian collection + quantization + file write inside `if master_process:`, barrier, then all ranks read file for eval. Avoids undefined `hessians` on non-master ranks.
+- **1xH100 smoke test revealed correctness bug**: roundtrip gap 0.212 BPB (27x worse than anchor). GPTQ pipeline mechanics work but quantized weights reconstruct very poorly. Must debug before 8xH100 run.
+- Standard NGC 26.03 container used (no FA3 dependency) — confirmed correct, no container issues.
 
 ## Hard gates
 

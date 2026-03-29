@@ -32,6 +32,9 @@ Stretch:
 - Pegasus `8xH100` path works when launched with Slurm-native `srun`
 - Pegasus `8xH100` path does **not** work reliably with `torchrun --standalone` on `serv-3342`
 - NGC 26.03 container on Pegasus confirmed working with fscratch setup
+- Saved Pegasus FA3 container exists at `/netscratch/$USER/containers/pytorch_25.02_fa3.sqsh`
+- `1xH100` FA3 smoke is confirmed healthy
+- Stock `25.02` + `--no-deps` FA3 import is not viable on Pegasus
 
 ## Locked baseline facts
 
@@ -78,21 +81,36 @@ Do not use:
 - GPTQ-lite percentile clip search does not help at this scale (Session 04 Delta 1 negative result: worse BPB + artifact cap violation)
 - LeakyReLU^2 activation is neutral (Session 04 Delta 2: sliding s64 val_bpb effectively identical at `1.12904123`, but slightly better quantization metrics and 168KB smaller artifact; slower step time cancels quality gain)
 - The local public `1.1194` record is not “TTT only”: its pre-TTT base is already `1.1218` at `83.4 ms`, so stronger pre-TTT work and throughput matter before TTT can close the remaining gap
+- Direct FA3 on Pegasus is now benchmark-backed as the first implementation target: in the isolated attention benchmark, `25.02` + wheel ran direct FA3 at `0.165 ms/iter` vs SDPA flash at `1.889 ms/iter` in the same container. This is kernel-only evidence and still needs full-training validation.
+- The FA3 deployment path is now operationally locked: build the saved `25.02` FA3 container once, then reuse it for smoke and full jobs.
+- The first `1xH100` FA3 smoke trained normally and stabilized near `640 ms/step` after warmup.
+- The first full `8xH100` FA3 run on that saved-container path is a clean negative result: slower, fewer steps, and worse BPB than the SDPA anchor.
+
+## Session 05b: Full Hessian GPTQ (2026-03-29)
+
+- Implementation: `records/track_non_record_16mb/2026-03-29_full_hessian_gptq/train_gpt.py`
+- Plan: `docs/campaign/artifacts/05b_full_hessian_gptq_plan.md`
+- Commit: `e00bc0a` pushed to origin/main
+- Algorithm: post-training calibration (128 seqs), Cholesky error compensation, block_size=128, actorder, percdamp=0.01
+- 4 new functions (~200 lines): `_make_hessian_hook`, `collect_hessians`, `gptq_quantize_layer`, `gptq_mixed_quantize_int6`
+- Export path restructured: rank-0-only GPTQ, barrier, all ranks read file for eval
+- **1xH100 smoke test: CORRECTNESS BUG** — roundtrip gap 0.212 BPB (27x worse than anchor's 0.00775)
+  - 66 layers GPTQ'd, 0 Cholesky fallbacks, 4.2s quantization, 7.75MB artifact
+  - Pipeline mechanics work, but quantized weights reconstruct poorly
+  - Must debug before 8xH100 run
 
 ## What has not happened yet
 
-- no Session 05 throughput audit artifact yet
-- no Session 05 pre-TTT stack-gap map yet
-- no TTT legality / portability audit artifact yet
+- no correct Full Hessian GPTQ result yet (bug found in first smoke test)
+- no vendor-tuned NGC FA3 runtime result yet
+- no positive end-to-end FA3 result yet
 - no top-tier leaderboard-adjacent result yet
-- no FA3 portability decision yet
+- no measured VE128 delta yet
 
 ## Best next move
 
-- Session 04 should be closed rather than extended by default
-- Session 05 should open with a three-part audit:
-  - throughput gap decomposition, especially FA3 portability
-  - pre-TTT stack difference audit versus the local `1.1194` record
-  - TTT correctness and integration audit
-- LeakyReLU^2 is keepable as a future stack component, but not a reason to keep micro-delta mode alive
-- Do not spend time on standalone math=False
+- **Debug the GPTQ roundtrip quality regression** — top priority
+- Add per-layer MSE comparison, try disabling actorder, verify against PR diffs
+- After fix: re-smoke on 1xH100, then full 8xH100 run
+- Then Session 05c training bundle (XSA-all + VE128 + SWA + warmdown3500)
+- Do not spend time on FA3 or TTT until GPTQ is fixed

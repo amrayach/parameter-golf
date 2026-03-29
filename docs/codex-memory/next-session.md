@@ -2,18 +2,37 @@
 
 ## Phase
 
-**Session 05 audit complete. Next: FA3 verification on NGC 26.03, then FA3 isolated delta (Delta 3).**
+**Session 05b GPTQ implementation complete but has a CORRECTNESS BUG. Must debug before 8xH100 run.**
 
 ## Immediate next action
 
-1. **Verify FA3 on Pegasus NGC 26.03 container**: `python -c "from flash_attn_interface import flash_attn_func; print('FA3 OK')"`
-2. If FA3 available: create `records/track_non_record_16mb/2026-03-29_delta3_fa3/` and implement FA3 isolated delta against anchor
-3. If not: check `pip install flash-attn` feasibility in-container
-4. Read `docs/campaign/artifacts/05_ttt_correctness_audit.md` for the full ranked plan
+1. **Debug the GPTQ roundtrip quality regression** — 0.212 BPB gap vs anchor's 0.00775
+   - Code: `records/track_non_record_16mb/2026-03-29_full_hessian_gptq/train_gpt.py`
+   - Plan: `docs/campaign/artifacts/05b_full_hessian_gptq_plan.md`
+   - The GPTQ pipeline runs cleanly (66 layers, 0 fallbacks, 4.2s) but produces garbage weights
+2. **Debug approach**: Add per-layer MSE comparison (GPTQ vs naive), try disabling actorder, verify Hinv_chol usage against PR #634/#1019 diffs
+3. After fix: re-run 1xH100 smoke, verify roundtrip gap < 0.01
+4. Then: full 8xH100 600s run
+5. Then: Session 05c training bundle (XSA-all + VE128 + SWA + warmdown3500)
+
+## Key files for debugging
+
+- `records/track_non_record_16mb/2026-03-29_full_hessian_gptq/train_gpt.py` — lines 490-571 (`gptq_quantize_layer`)
+- `docs/campaign/artifacts/05b_full_hessian_gptq_plan.md` — full algorithm description
+- PR #634 and #1019 on openai/parameter-golf — reference implementations (use `gh pr diff`)
+
+## 1xH100 smoke test result (2026-03-29 20:43 UTC+2)
+
+- Node: serv-3340, 906 steps, step_avg ~663ms
+- Pre-quant EMA: val_bpb=1.4775 (normal for 1xH100 906 steps)
+- Roundtrip: val_bpb=1.6896 (**gap: 0.212 BPB — catastrophically bad**)
+- GPTQ stats: 66 GPTQ layers, 0 naive, 0 Cholesky fallbacks, 4236ms
+- Artifact: 7,754,877 bytes (under cap)
+- Job killed by time limit before sliding eval completed
 
 ## Session 05 audit summary
 
-The audit identified the 2026-03-22 record as the primary porting reference (same CastedLinear/DDP architecture, has FA3+VE+SWA+warmdown3500+QAT). First-wave features are: FA3, VE128, warmdown 3500, SWA, Late QAT, LeakyReLU² re-test (gated on FA3). TTT appears compliant via score-first protocol. See full audit: `docs/campaign/artifacts/05_ttt_correctness_audit.md`.
+The audit identified the 2026-03-22 record as the primary porting reference (same CastedLinear/DDP architecture, has FA3+VE+SWA+warmdown3500+QAT). First-wave features are: FA3, VE128, warmdown 3500, SWA, Late QAT, LeakyReLU² re-test (gated on FA3). TTT appears compliant via score-first protocol. Follow-up benchmark: direct FA3 on `25.02` + wheel beat SDPA flash by `11.44x` in the isolated attention kernel benchmark. See full audit: `docs/campaign/artifacts/05_ttt_correctness_audit.md`.
 
 ## Prerequisites (all satisfied)
 
@@ -21,7 +40,25 @@ The audit identified the 2026-03-22 record as the primary porting reference (sam
 - Remaining donor gap is small (`+0.00419944` on final sliding), so broad redesign is unnecessary
 - NGC container + fscratch path confirmed on Pegasus
 - Launcher lesson locked: use `srun --ntasks=8 --gpus-per-task=1 --gpu-bind=none`, NOT torchrun
+- Saved FA3 Pegasus container built and import-verified
+- `1xH100` FA3 smoke completed without stability issues
+- `8xH100` FA3 saved-container run completed and regressed vs anchor
 - int6+zstd roundtrip artifact: `15751324` bytes, headroom `248676` bytes
+
+## Session 05 FW-1 closeout
+
+`2026-03-29_fa3_port` vs Session 03 anchor:
+
+- Sliding s64 val_bpb: `1.12958984` (worse by `+0.00054538`)
+- Pre-quant EMA val_bpb: `1.14532979` (worse by `+0.00060576`)
+- Roundtrip val_bpb: `1.15296145` (worse by `+0.00048872`)
+- Artifact: `15529557` bytes (smaller by `221767` bytes)
+- Step_avg: `92.67 ms` (`+1.30 ms` slower, `-90` steps)
+
+Conclusion:
+- The current saved-container FA3 runtime is a clean negative result.
+- The likely issue is runtime-level regression from the pip-installed generic torch stack replacing the tuned NGC build.
+- Do not rerun this runtime path as-is.
 
 ## Session 04 closeout
 
@@ -64,25 +101,12 @@ The audit identified the 2026-03-22 record as the primary porting reference (sam
 4. `docs/campaign/sessions/05_ttt_correctness_audit.md`
 5. `records/track_10min_16mb/2026-03-23_LeakyReLU_LegalTTT_ParallelMuon/README.md`
 
-## Launcher template for 8xH100 on Pegasus (NGC container)
+## Next investigation shape
 
 ```bash
-salloc -p H100 --nodes=1 --ntasks=8 --gpus-per-task=1 --gpu-bind=none --cpus-per-task=6 --time=02:00:00
+ls -1 /enroot/nvcr.io_nvidia_pytorch_*.sqsh | sort -V
 
-srun --gpu-bind=none bash -c '
-export LOCAL_RANK=$SLURM_LOCALID
-export RANK=$SLURM_PROCID
-export WORLD_SIZE=$SLURM_NTASKS
-export NCCL_IB_DISABLE=1
-cd /netscratch/ayach/parameter-golf
-RUN_ID=<run_id> \
-DATA_PATH=./data/datasets/fineweb10B_sp1024 \
-TOKENIZER_PATH=./data/tokenizers/fineweb_1024_bpe.model \
-VOCAB_SIZE=1024 \
-AMP_DTYPE=auto \
-MAX_WALLCLOCK_SECONDS=600 \
-VAL_LOSS_EVERY=200 \
-TRAIN_LOG_EVERY=50 \
-python3 -u records/track_non_record_16mb/2026-03-28_pre_ttt_anchor/train_gpt.py
-' 2>&1 | tee /netscratch/ayach/<run_id>.log
+srun -p H100 --ntasks=1 --gpus-per-task=1 --cpus-per-task=6 --mem=64G --time=00:10:00 \
+  --container-image=/enroot/nvcr.io_nvidia_pytorch_26.03-py3.sqsh \
+  bash -c 'python -c "import torch; print(torch.__version__)"'
 ```

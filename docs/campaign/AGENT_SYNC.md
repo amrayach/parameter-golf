@@ -470,22 +470,27 @@ Interpretation:
 
 Session 05 follows a 3-phase strategy based on competitive landscape analysis (2026-03-29):
 
-1. **Phase 1: FA3 throughput port** (ACTIVE)
-   - Port anchor attention from SDPA to direct `flash_attn_interface`
-   - Current saved-container runtime at `/netscratch/$USER/containers/pytorch_25.02_fa3.sqsh` is a measured negative result
-   - Full `8xH100` result: `92.67 ms/step`, sliding s64 `1.12958984` vs anchor `91.37 ms` and `1.12904446`
-   - Further FA3 work is gated on a vendor-tuned NGC runtime
-   - Candidate paths: build FA3 against an NGC torch build, or find a newer NGC image where FA3 works without replacing the tuned stack
+1. **Phase 1: FA3 throughput port** — NEGATIVE, PARKED
+   - Full `8xH100` result: `92.67 ms/step`, sliding s64 `1.12958984` — worse than anchor
+   - Root cause: pip torch replacement killed vendor-tuned NGC performance
+   - Gated on vendor-tuned NGC runtime with native FA3 support
 
-2. **Phase 2: Full Hessian GPTQ**
-   - Replace int6+zstd with Cholesky-compensated GPTQ
-   - Reference: PR #1060 and #1072 implementations
-   - Expected gain: `0.003-0.007 BPB` + better artifact compression
-   - This is now the cleaner next model-side delta if a good FA3 runtime is not found quickly
+2. **Phase 2: Full Hessian GPTQ** — IMPLEMENTED, CORRECTNESS BUG
+   - Code: `records/track_non_record_16mb/2026-03-29_full_hessian_gptq/train_gpt.py`
+   - Plan: `docs/campaign/artifacts/05b_full_hessian_gptq_plan.md`
+   - Commit: `e00bc0a` pushed to origin/main
+   - Implementation: 4 new functions (~200 lines), rank-0-only Hessian collection + GPTQ quantization
+   - Algorithm: post-training calibration (128 seqs × 2048 tokens), Cholesky error compensation, block_size=128, actorder, percdamp=0.01
+   - **1xH100 smoke test (2026-03-29 20:43 UTC+2, serv-3340): BUG FOUND**
+     - GPTQ pipeline ran cleanly: 66 layers GPTQ'd, 0 Cholesky fallbacks, 4236ms quantization
+     - But roundtrip quality is catastrophically bad: gap = **0.212 BPB** (anchor gap = 0.00775)
+     - Pre-quant EMA: `1.4775` → Roundtrip: `1.6896` (906 steps, 1xH100)
+     - Artifact: `7,754,877` bytes (under 16MB cap)
+     - **Must debug before 8xH100 run**
+   - Suspects: error compensation formula, Hinv_chol row/column indexing, actorder un-permute, per-row scale interaction with column-wise GPTQ updates
 
 3. **Phase 3: Novelty contribution**
    - Gated on phases 1-2 reaching competitive `1.12x` base
-   - Candidates: fused Triton MLP kernel, coprime-stride loader, XAI/RFN-derived approach
    - TTT: parked, revisit only if phases 1-2 leave insufficient gap closure
 
 ### 6. Grant/application stance
