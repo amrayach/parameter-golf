@@ -4,35 +4,57 @@ Date: 2026-03-29
 
 ## Current Objective
 
-Use the completed Session 03 anchor as the fixed Pegasus competition reference while opening Session 05.
+Build a portable frontier base, then add novelty. Do not replicate old merged #1 (PR #549) verbatim.
 
-Session 04 is now closed:
-- Delta 1 GPTQ-lite clip search: failed
-- Delta 2 LeakyReLU^2: neutral
+Session 04 is closed (Delta 1 failed, Delta 2 neutral). Session 05 strategy has been revised
+based on competitive landscape analysis (2026-03-29 17:00 UTC+2).
 
-The immediate goal is Session 05:
-- audit the throughput gap to the faster public stack
-- audit portable pre-TTT stack improvements
-- audit and plan score-first TTT integration
+### Competitive Landscape (2026-03-29)
+
+The validated merged #1 is still PR #549 at `1.1194` BPB (with TTT).
+But the open frontier has moved:
+
+- **PR #1060**: `1.1122` BPB, 3-seed mean, no TTT — coprime-stride loader + full Hessian GPTQ + XSA-all. Most credible new claim.
+- **PR #1072**: `1.117` BPB, 1-seed only — fused Triton MLP (70ms/step) + online Hessian GPTQ + parallel Muon. Interesting but unconfirmed.
+- **PR #1077**: `1.1130` BPB, 3-seed — looks template-like, internally inconsistent. Treat with caution.
+- **PR #1070**: `1.1190` BPB — clean PR #549 reproduction, not frontier.
+
+Key insight: every competitive submission shares the same architectural backbone (11L U-Net, GQA, LeakyReLU², XSA, VE128, BigramHash). Differentiation is in throughput, quantization, and data loading. TTT is losing ground — top unvalidated claims beat #1 without it.
+
+### Revised Session 05 Plan (3 phases)
+
+**Phase 1 — Throughput (FA3 port)**
+- Port anchor from SDPA to direct `flash_attn_interface` on NGC 25.02 container
+- Microbenchmark shows 11.44x kernel speedup; full training impact TBD
+- Goal: close the `91.37 ms → ~70-80 ms/step` gap, gain extra training steps
+
+**Phase 2 — Quantization upgrade (Full Hessian GPTQ)**
+- Replace current int6+zstd with full Hessian GPTQ (Cholesky error compensation)
+- PRs #1060 and #1072 both use this; proven `0.003-0.007 BPB` gain over GPTQ-lite
+- Also fixes the artifact compression issue seen in Session 04 Delta 1
+
+**Phase 3 — Novelty**
+- Only after phases 1-2 give a competitive `1.12x` base
+- Candidate areas: fused Triton kernels, loader optimization, or novel contribution from XAI/RFN background
+- TTT is parked — revisit only if needed after phases 1-2
 
 ## In Scope
 
-- Keep the measured Session 03 anchor as the fixed competition reference
-- Use the verified Pegasus `8xH100` Slurm-native launch path as the main execution base
-- Preserve exact launcher, artifact, and metric logging discipline from the baseline phase
-- Investigate throughput contributors to the `91.37 ms -> 83.4 ms` gap, starting with FA3 portability
-- Audit portable stack differences between the anchor and the local `1.1194` public record
-- Audit and plan TTT integration with explicit legality and cost checks
-- Refresh the compute request later using stronger H100 evidence if results improve
+- FA3 port of anchor attention on NGC 25.02 + `flash_attn_3` wheel
+- Full Hessian GPTQ implementation to replace int6+zstd
+- Throughput optimization to maximize training steps in 600s
+- Building a modular frontier base, not hard-binding to one historical winner
+- Verified Pegasus `8xH100` Slurm-native launch path
+- Preserved launcher, artifact, and metric logging discipline
 
 ## Out Of Scope
 
-- Claiming parity with the public `1.1194` record before measuring a stronger pre-TTT base
-- More Session 04 micro-deltas as the default mainline
+- Verbatim replication of PR #549
+- TTT as the center of the plan (parked, optional later)
+- More Session 04 micro-deltas
 - Treating RFN as the mainline strategy
-- Spending RunPod budget except for final validation later
-- Bundling unrelated throughput, export, model, and eval changes into one unattributable run without a plan
-- Arbitrary trainer edits unrelated to the Session 05 throughput / pre-TTT / TTT program
+- RunPod budget except for final validation
+- Bundling unrelated changes into one unattributable run
 
 ## Current Hardware Stance
 
@@ -63,7 +85,8 @@ The immediate goal is Session 05:
 - `8xH100` launch via `torchrun --standalone` is blocked by rendezvous timeout on `serv-3342`
 - `8xH100` launch via Slurm-native `srun` works on `serv-3342`
 - Session 05 audit artifact: complete (`docs/campaign/artifacts/05_ttt_correctness_audit.md`)
-- Immediate next deliverable: FA3 verification on NGC 26.03 container, then FA3 isolated delta (Delta 3)
+- FA3 isolated attention microbenchmark: complete
+- Immediate next deliverable: Session 05 FW-1 FA3 isolated delta on top of the Session 03 anchor
 
 ## Canonical Workspaces
 
@@ -306,6 +329,31 @@ Interpretation:
 - Measured anchor state for comparison was `enable_math_sdp(True)`. Delta 2 preserved that isolation.
 - LeakyReLU^2 is **not a standalone graduating delta**, but may be a useful stack component later (slightly helps quantization + artifact size without hurting headline metric).
 
+Date: 2026-03-29
+Node: `serv-3343`
+GPU: `1x NVIDIA H100 80GB HBM3`
+Run: `scripts/bench_fa3_vs_sdpa.py` attention microbenchmark
+
+Measured outputs:
+
+- Workload: isolated attention kernel benchmark matching anchor dimensions
+  - `B=16`, `T=2048`, `H=8`, `Hkv=4`, `D=64`
+  - `50` warmup iterations, `200` timed iterations
+- NGC `26.03` container (`PyTorch 2.11.0a0+a6c236b9fd.nv26.03.46836102`, `CUDA 13.2`)
+  - SDPA flash: `1.967 ms/iter`
+- NGC `25.02` container + installed `flash_attn_3` wheel (`PyTorch 2.11.0+cu130`, `CUDA 13.0`)
+  - SDPA flash: `1.889 ms/iter`
+  - direct `flash_attn_interface` FA3: `0.165 ms/iter`
+  - relative kernel speedup vs SDPA flash in the same container: `11.44x`
+
+Interpretation:
+
+- This is an **isolated attention microbenchmark**, not end-to-end training throughput.
+- The result is still strong enough to justify an isolated FA3 training delta next.
+- NGC `26.03` remains the standard stable container path for normal runs.
+- NGC `25.02` + installed FA3 wheel is the current explicit-FA3 experiment path.
+- The next real question is whether direct FA3 materially improves `step_avg` in the full anchor training loop.
+
 ## Next Actions
 
 ### 1. Freeze the Session 03 facts
@@ -360,24 +408,27 @@ Interpretation:
 - The isolated micro-delta sweep did its job: it ruled out one export-side hypothesis and showed one model-side tweak is stackable but not standalone.
 - Session 04 should be treated as closed rather than extended into more tiny deltas by default.
 
-### 5. Session 05 opening stance
+### 5. Session 05 revised plan
 
-Session 05 has three linked tracks:
+Session 05 follows a 3-phase strategy based on competitive landscape analysis (2026-03-29):
 
-1. **Throughput audit**
-   - explain the gap from anchor `91.37 ms` to the public `83.4 ms` stack
-   - start with FA3 portability
-   - separate FA3 from harder changes like parameter banking and Parallel Muon
+1. **Phase 1: FA3 throughput port** (ACTIVE)
+   - Port anchor attention from SDPA to direct `flash_attn_interface`
+   - Container: NGC 25.02 + `flash_attn_3-3.0.0` wheel (CUDA 13.0 match confirmed)
+   - Layout change: remove `.transpose(1, 2)` on q/k/v, use `(B, T, H, D)` FA3 layout
+   - GQA: FA3 handles `Hkv < H` broadcasting automatically
+   - Smoke test on 1xH100, then full 600s 8xH100 run
+   - Success metric: measurable `step_avg` improvement over `91.37 ms`
 
-2. **Pre-TTT base enhancement audit**
-   - compare the anchor to the local `1.1194` public record
-   - rank portable stack features by cost and likely upside
-   - likely first-wave candidates: VE128, warmdown3500, Bigram 1536, tight SWA
+2. **Phase 2: Full Hessian GPTQ**
+   - Replace int6+zstd with Cholesky-compensated GPTQ
+   - Reference: PR #1060 and #1072 implementations
+   - Expected gain: `0.003-0.007 BPB` + better artifact compression
 
-3. **TTT correctness + portability audit**
-   - inspect the public score-first TTT path
-   - verify legality, evaluation budget, and portability to the anchor stack
-   - treat TTT as necessary but not sufficient from the current `1.1290` anchor
+3. **Phase 3: Novelty contribution**
+   - Gated on phases 1-2 reaching competitive `1.12x` base
+   - Candidates: fused Triton MLP kernel, coprime-stride loader, XAI/RFN-derived approach
+   - TTT: parked, revisit only if phases 1-2 leave insufficient gap closure
 
 ### 6. Grant/application stance
 
@@ -415,15 +466,18 @@ The evidence package is now:
 Do not spend more time on repeated `torchrun --standalone` retries or more root-baseline reruns.
 Session 05 audit is complete (`docs/campaign/artifacts/05_ttt_correctness_audit.md`).
 
-Key decisions from the audit:
-- 2026-03-22 record is the primary first-wave porting reference (same CastedLinear/DDP architecture)
-- FA3 is the first implementation target (verify on NGC 26.03, then isolated delta)
-- Parameter Banking / Parallel Muon are second-wave
+Key decisions from the audit, competitive analysis, and FA3 benchmark:
+- Strategy pivot: build portable frontier base, not replicate old #1 verbatim
+- FA3 is the first implementation target (Phase 1)
+- Full Hessian GPTQ is the second target (Phase 2), replacing GPTQ-lite
+- TTT is parked — top open PRs beat #1 without it
+- Container: NGC `25.02` + installed `flash_attn_3` wheel (CUDA 13.0)
+- Treat the `11.44x` result as attention-kernel-only evidence, not full training speedup
+- Parameter Banking / Parallel Muon are deferred until after phases 1-2
 - LeakyReLU² re-test is gated on FA3 (throughput-coupling hypothesis)
-- Lane A (isolated deltas) is the default approach
 
 If a fresh session starts now, it should:
-1. Verify FA3 availability on NGC 26.03 container
-2. If FA3 available: implement Delta 3 (FA3 isolated delta against anchor)
-3. If not: check `pip install flash-attn` feasibility in-container
-4. Read `docs/campaign/artifacts/05_ttt_correctness_audit.md` for the full ranked plan
+1. Port anchor attention from SDPA to direct FA3 (`flash_attn_interface`)
+2. Run a short Pegasus smoke on 1xH100 to measure `step_avg` impact
+3. Run the full `600s` 8xH100 job if smoke is healthy
+4. Then proceed to Phase 2 (Full Hessian GPTQ)
