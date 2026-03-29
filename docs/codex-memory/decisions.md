@@ -46,11 +46,17 @@
 
 - TTT is now back in scope because the pre-TTT anchor exists and Session 04 has finished.
 - TTT should be treated as necessary but not sufficient from the current anchor; the local `1.1194` record has pre-TTT base `1.1218`, so stronger pre-TTT work is still required.
-- The next phase should separate:
-  - throughput audit
-  - pre-TTT stack-gap audit
-  - TTT correctness / portability audit
 - FA3 is back in scope as a deliberate Session 05 throughput investigation, not as an anchor bring-up risk.
+
+### Session 05 audit decisions (2026-03-29)
+
+1. **2026-03-22 record is the primary first-wave porting reference** — it uses the same CastedLinear/DDP/standard-Muon architecture as our anchor. Use it for FA3, VE128, SWA, warmdown 3500, and Late QAT.
+2. **2026-03-23 #1 record is the TTT reference** — use it for score-first TTT protocol porting only.
+3. **FA3 is the first implementation target** — leading hypothesis for largest throughput contribution, architecturally independent of Parameter Banking.
+4. **Parameter Banking and Parallel Muon are second-wave** — 2026-03-22 achieves 1.1233 without them.
+5. **LeakyReLU² re-test is gated on FA3** — the throughput-coupling hypothesis (Session 04 Delta 2 neutrality caused by +0.72ms eating training steps) must be tested, not assumed.
+6. **Lane A (isolated deltas) is the default** — switch to Lane B (bundled reproduction) only if time pressure or slow progress demands it.
+7. **Score-first TTT appears compliant** — matches PR #461 public precedent; torch.inference_mode() guards provide hard scoring-phase statefulness guarantee. Not a formal ruling.
 
 ## Hard gates
 

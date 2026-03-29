@@ -2,14 +2,18 @@
 
 ## Phase
 
-**Session 04 closed. Session 05 next: throughput audit + pre-TTT base enhancement audit + TTT correctness audit.**
+**Session 05 audit complete. Next: FA3 verification on NGC 26.03, then FA3 isolated delta (Delta 3).**
 
 ## Immediate next action
 
-**Session 05 planning and audit** on top of the Session 03 anchor. Work in this order:
-1. Throughput audit: explain `91.37 ms` anchor vs `83.4 ms` local public record and determine whether FA3 is portable on Pegasus / NGC.
-2. Pre-TTT stack-gap audit: rank the easy portable pieces from the local `1.1194` stack (`VE128`, `warmdown3500`, `Bigram 1536`, `tight SWA`, etc.).
-3. TTT audit: trace the score-first protocol, legality, eval budget, and portability to the anchor stack.
+1. **Verify FA3 on Pegasus NGC 26.03 container**: `python -c "from flash_attn_interface import flash_attn_func; print('FA3 OK')"`
+2. If FA3 available: create `records/track_non_record_16mb/2026-03-29_delta3_fa3/` and implement FA3 isolated delta against anchor
+3. If not: check `pip install flash-attn` feasibility in-container
+4. Read `docs/campaign/artifacts/05_ttt_correctness_audit.md` for the full ranked plan
+
+## Session 05 audit summary
+
+The audit identified the 2026-03-22 record as the primary porting reference (same CastedLinear/DDP architecture, has FA3+VE+SWA+warmdown3500+QAT). First-wave features are: FA3, VE128, warmdown 3500, SWA, Late QAT, LeakyReLU² re-test (gated on FA3). TTT appears compliant via score-first protocol. See full audit: `docs/campaign/artifacts/05_ttt_correctness_audit.md`.
 
 ## Prerequisites (all satisfied)
 

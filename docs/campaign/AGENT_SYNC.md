@@ -62,7 +62,8 @@ The immediate goal is Session 05:
 - Baseline seed spread on A100 is small (`+0.00319322` BPB from seed `1337` to seed `42`)
 - `8xH100` launch via `torchrun --standalone` is blocked by rendezvous timeout on `serv-3342`
 - `8xH100` launch via Slurm-native `srun` works on `serv-3342`
-- Immediate next deliverable: Session 05 throughput + pre-TTT + TTT audit, not more Session 04 micro-deltas
+- Session 05 audit artifact: complete (`docs/campaign/artifacts/05_ttt_correctness_audit.md`)
+- Immediate next deliverable: FA3 verification on NGC 26.03 container, then FA3 isolated delta (Delta 3)
 
 ## Canonical Workspaces
 
@@ -412,8 +413,17 @@ The evidence package is now:
 - `8xH100` Session 04 Delta 2 LeakyReLU^2 neutral
 
 Do not spend more time on repeated `torchrun --standalone` retries or more root-baseline reruns.
-If a fresh session starts now, it should begin by closing Session 04 and planning Session 05 from:
-- the measured Session 03 anchor
-- the Session 04 closeout artifact
-- the local `1.1194` public record
-- the existing Session 05 audit doc
+Session 05 audit is complete (`docs/campaign/artifacts/05_ttt_correctness_audit.md`).
+
+Key decisions from the audit:
+- 2026-03-22 record is the primary first-wave porting reference (same CastedLinear/DDP architecture)
+- FA3 is the first implementation target (verify on NGC 26.03, then isolated delta)
+- Parameter Banking / Parallel Muon are second-wave
+- LeakyReLU² re-test is gated on FA3 (throughput-coupling hypothesis)
+- Lane A (isolated deltas) is the default approach
+
+If a fresh session starts now, it should:
+1. Verify FA3 availability on NGC 26.03 container
+2. If FA3 available: implement Delta 3 (FA3 isolated delta against anchor)
+3. If not: check `pip install flash-attn` feasibility in-container
+4. Read `docs/campaign/artifacts/05_ttt_correctness_audit.md` for the full ranked plan
