@@ -1,92 +1,62 @@
 # Session Handoff
 
-Date: 2026-03-29
+Date: 2026-03-30
 
 ## Current Truths
 
-- Session 03 pre-TTT anchor port is complete.
+- Session 03 pre-TTT anchor port is complete and remains the fixed reference.
 - Sliding s64 val_bpb: `1.12904446` on `8xH100 SXM5`, `serv-3342`.
 - Pre-quant EMA val_bpb: `1.14472403`.
 - Int6 roundtrip val_bpb: `1.15247273`.
 - Steps: `6564`, step_avg: `91.37 ms`.
 - Artifact: `15751324` bytes (model `15692752` + code `58572`).
-- Official leaderboard entry is record-gated. Beating `#5` quality is not enough; a submission must beat current `#1`.
+- Official leaderboard entry is record-gated. Must beat current merged #1.
+- Current official merged #1 is PR `#1019` at `1.1147` BPB (3-seed mean `1.88218` nats).
 - NGC 26.03 container + fscratch is the confirmed stable Pegasus path.
-- Saved Pegasus `25.02` FA3 container is now a measured negative-result path, not a mainline candidate.
-- Session 04 Delta 1 (GPTQ-lite clip search) is COMPLETE — FAILED.
-- Session 04 Delta 2 (LeakyReLU^2) is COMPLETE — NEUTRAL.
-- Session 05 mainline is now GPTQ correctness.
-- The first `1xH100` Full Hessian GPTQ smoke exposed a correctness failure in the export path.
+- Three agents coordinate on this repo: Claude Code, Codex, and Antigravity.
 
 ## What Matters Now
 
-- Session 05b currently has one job: repair Full Hessian GPTQ so that the roundtrip path behaves at least plausibly.
-- Do not spend more training budget until the export path is debugged on the same checkpoint.
-- Working PR code is now the primary implementation source. Papers are secondary.
+- **Session 05c-plus** is the active objective: a training-quality bundle on the Session 03 anchor.
+- Code is implemented and pushed: `records/track_non_record_16mb/2026-03-30_training_bundle_plus/train_gpt.py`
+- Smoke test script is ready: `records/track_non_record_16mb/2026-03-30_training_bundle_plus/smoke_test.sh`
+- Next step: run 1xGPU Pegasus smoke, then 8xH100 full run (Pegasus or RunPod $25 credits).
+- Do not work on GPTQ, FA3, TTT, or SWA until 05c-plus training results are measured.
 
-## Latest GPTQ Smoke Result
+## 05c-plus Bundle
 
-Experiment folder:
-- `records/track_non_record_16mb/2026-03-29_full_hessian_gptq`
+Four changes on Session 03 anchor:
+1. XSA 4 → 11 (all layers)
+2. VE128 on layers 9-10 (shared ValueEmbedding)
+3. Warmdown 3000 → 3500
+4. LeakyReLU(0.5)² replacing ReLU²
 
-Measured on `1xH100`:
-- stopped at `906` steps
-- step_avg `662.47 ms`
-- pre-quant EMA exact `1.47753094`
-- roundtrip exact `1.68963326`
-- Hessians collected: `67`
-- GPTQ layers used: `66`
-- Cholesky fallbacks: `0`
-- artifact total: `7754877` bytes
-- job timed out before sliding eval finished
+Not included: SWA (dead code in PR #1019 and #634), GPTQ (parked), FA3 (ABI issue).
 
-Interpretation:
-- the smoke is valid as a **mechanics test**
-- it is not valid as a **quality comparison** to the `8xH100` anchor
-- the export gap is catastrophic, so the quantizer is still wrong
+Target: sliding s64 val_bpb < 1.126 (anchor 1.129).
 
-## Confirmed divergences from working PR code
+## Parked Work
 
-- local within-block GPTQ residual propagation used `W_block[:, j + 1:]`, while PRs `#634`, `#1019`, and `#1060` use `W_block[:, j:]`
-- the old local path had no multi-percentile GPTQ search
-- the old local path clamped to `[-32, 31]` instead of symmetric `[-31, 31]`
-- the old local classifier pulled an extra `bigram.proj` Hessian due to broad `.proj.` matching
-- the old path had no per-layer naive-vs-GPTQ export diagnostics
+### GPTQ (Session 05b) — parked after 7 ablations
 
-## Safest current conclusion
+Seven ablations on the same Session 03 checkpoint all failed. Ablation #6 (PR #1019 verbatim transplant) produced byte-identical MSE to the local code, proving the GPTQ code is correct. The failure is model-specific: relu creates sparse Hessians, leaky_relu does not. GPTQ may become viable after 05c-plus trains with LeakyReLU².
 
-The local GPTQ implementation was not faithful enough to the known-good PR quantizer.
+GPTQ replay on a 05c-plus checkpoint requires a merge step: the parked 05b script has the old architecture (no VE, relu²).
 
-A PR-grounded repair is now landed in `records/track_non_record_16mb/2026-03-29_full_hessian_gptq/train_gpt.py`, but it is not runtime-verified yet because:
-- no saved checkpoint exists in the repo for same-checkpoint export-only replay
-- this local shell does not have `torch`, so verification here stopped at `py_compile`
+### FA3 — parked (ABI issue)
 
-Update:
-- one server-side replay was run and still failed
-- `gptq_diag` reported GPTQ worse than both naive baselines on all `66/66` layers
-- an export-only replay mode is now landed so the next step can reuse the saved `final_model.pt` without retraining
-- a debug-only replay flag now exists: `EXPORT_SKIP_SLIDING_EVAL=1`
-- that flag skips the slow sliding-window submission eval and is intended for same-checkpoint A/B replay work only
-- replay ablations were then measured on the same checkpoint:
-  - `replay_ref`: `1.82064983 -> 2.15605819`, gap `+0.33540836`
-  - `replay_noact`: `1.82064982 -> 2.21586588`, gap `+0.39521606`
-  - `replay_noact_full`: `1.82064982 -> 2.21590301`, gap `+0.39525319`
-- all three replay variants still show `66/66` layers worse than both naive baselines
-- `actorder=False` is worse, and `block_size=d_col` does not materially change the result
-- the next likely bug site is upstream Hessian construction / interpretation, not actorder or block partitioning
+11.44x kernel speedup negated by pip torch downgrade. Parked until NGC-native path exists.
 
-Do this next:
-1. compare `collect_hessians` and Hessian preparation against PRs `#634`, `#1019`, and `#1060`
-2. focus on matrix orientation, normalization, damping, and dead-column handling
-3. keep replaying from the same `final_model.pt` while debugging
-4. only after the gap is sane, rerun `1xH100`
+### TTT — parked
 
-## Source Of Truth Files
+Parked pending stronger pre-TTT base.
 
-- `docs/campaign/AGENT_SYNC.md`
-- `CLAUDE.md`
-- `docs/codex-memory/decisions.md`
-- `docs/codex-memory/project-state.md`
-- `docs/codex-memory/next-session.md`
-- `records/track_non_record_16mb/2026-03-29_full_hessian_gptq/README.md`
-- `docs/campaign/prompts/session_05b_gptq_debug_restart.md`
+## Source of Truth Files
+
+- `AGENTS.md` — shared entry point
+- `docs/campaign/AGENT_SYNC.md` — mutable objectives and results
+- `CLAUDE.md` — standing rules
+- `docs/codex-memory/decisions.md` — locked decisions
+- `docs/codex-memory/project-state.md` — project state
+- `docs/codex-memory/next-session.md` — next actions
+- `docs/superpowers/plans/2026-03-30-session-05c-plus.md` — 05c-plus plan

@@ -5,6 +5,7 @@
 - train in under `10 minutes` on `8xH100 SXM`
 - artifact under `16,000,000` bytes total
 - final metric is `val_bpb`
+- official leaderboard entry is record-gated: must beat the current official SOTA by at least `0.005` nats with enough logs for `p < 0.01`
 
 ## Pegasus verified state
 
@@ -13,6 +14,11 @@
 - `8xH100` NCCL works under Slurm-native `srun`
 - `torchrun --standalone` is currently not the correct launcher for Pegasus `8xH100`
 - NGC 26.03 container confirmed working on Pegasus
+- Saved FA3 container confirmed at `/netscratch/$USER/containers/pytorch_25.02_fa3.sqsh`
+- Stock NGC `25.02` + `--no-deps` FA3 install fails with `undefined symbol: aoti_torch_abi_version`
+- `1xH100` FA3 smoke trains stably at about `640 ms/step` after warmup
+- `8xH100` FA3 on the saved `25.02` container is slower than the SDPA anchor (`92.67 ms` vs `91.37 ms`)
+- Challenge-shaped `8xH100` or `8xH200` runs must include `--nodes=1`
 - `/fscratch` confirmed as optimized data staging path (avoids `/netscratch` I/O bottlenecks)
 
 ## Current measured anchors
@@ -37,10 +43,23 @@
 
 - reserve for final validation only unless external credits are granted
 
-## Practical implication
+## Current phase
 
-- infrastructure uncertainty is no longer the blocker
-- throughput (SDPA vs FA3) is now the primary bottleneck
-- the secondary blocker is model quality under a very tight artifact budget
-- FA3 integration is the highest-leverage single change for Session 04
-- GPTQ-lite clip search confirmed as NOT helpful — pivot to LeakyReLU^2 as next delta
+- **Session 05c-plus is the active objective** — training-quality bundle on Session 03 anchor
+- Infrastructure uncertainty is no longer the blocker
+- Quality-first improvements matter more than throughput-first chasing
+- GPTQ is parked (7 ablations, code correct, failure model-specific)
+- FA3 is parked (ABI issue with NGC container)
+- SWA is excluded (dead code in reference PRs)
+- RunPod $25 credits reserved for one decisive 8xH100 run after Pegasus smoke passes
+
+## Practical rules
+
+- Do not hide Pegasus job output with `| tail -1`; use unbuffered Python instead
+- The saved-container FA3 runtime is a measured negative result; do not rerun as a throughput candidate
+- Future FA3 work requires a vendor-tuned NGC runtime, not the current pip-replaced stack
+- GPTQ-lite clip search confirmed as NOT helpful
+- Attention microbenchmark (kernel-only, not full training throughput):
+  - `26.03` SDPA flash: `1.967 ms/iter`
+  - `25.02` SDPA flash: `1.889 ms/iter`
+  - `25.02` direct FA3: `0.165 ms/iter`
