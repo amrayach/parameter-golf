@@ -1217,6 +1217,13 @@ def main() -> None:
     }
     log0(f"ema:enabled decay={args.ema_decay}")
 
+    # Save VE init snapshot for smoke-test gradient validation
+    if os.environ.get("SMOKE_SAVE_VE_INIT") == "1" and master_process and base_model.ve_shared is not None:
+        ve_init = {k: v.detach().cpu().clone() for k, v in base_model.state_dict().items()
+                   if "ve_shared" in k or "ve_layer_scales" in k}
+        torch.save(ve_init, "ve_init_snapshot.pt")
+        log0(f"smoke:saved VE init snapshot ({len(ve_init)} keys)")
+
     # -----------------------------
     # DATA LOADER & MODEL WARMUP
     # -----------------------------
