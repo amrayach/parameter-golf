@@ -96,7 +96,7 @@ class Hyperparameters:
     muon_wd = 0.04
     adam_wd = 0.04
     ema_decay = 0.997
-    eval_stride = 64
+    eval_stride = int(os.environ.get("EVAL_STRIDE", 64))
 
     bigram_vocab_size = 2048
     bigram_dim = 128
@@ -1487,7 +1487,7 @@ def main() -> None:
         )
         log0(f"final_int6_sliding_window_exact val_loss:{sw_val_loss:.8f} val_bpb:{sw_val_bpb:.8f}")
 
-    if args.eval_stride != 64 and 64 < sw_seq_len:
+    if args.eval_stride > 0 and args.eval_stride != 64 and 64 < sw_seq_len:
         torch.cuda.synchronize()
         t_slide64 = time.perf_counter()
         sw64_val_loss, sw64_val_bpb = eval_val_sliding(
