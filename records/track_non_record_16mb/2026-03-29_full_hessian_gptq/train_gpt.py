@@ -479,6 +479,66 @@ def dequantize_mixed_int6(result: dict[str, Tensor], meta: dict[str, object],
 # GPTQ: HESSIAN COLLECTION + QUANTIZATION
 # -----------------------------
 
+def generate_autoregressive_calib(model, device, num_seqs=64, seq_len=2048,
+                                   vocab_size=1024, temperature=0.8, batch_size=8, seed=42):
+    """Generate sequences autoregressively from the model for GPTQ calibration.
+    No external data accessed — fully self-contained.
+    Verbatim from PR #1019 (lines 1081-1101)."""
+    model.eval()
+    rng = torch.Generator(device=device)
+    rng.manual_seed(seed)
+    all_tokens = []
+    with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        for batch_start in range(0, num_seqs, batch_size):
+            bs = min(batch_size, num_seqs - batch_start)
+            tokens = torch.randint(0, vocab_size, (bs, 1), device=device, generator=rng)
+            for pos in range(seq_len - 1):
+                logits = model.forward_logits(tokens)
+                next_logit = logits[:, -1, :]
+                probs = torch.softmax(next_logit / temperature, dim=-1)
+                next_tok = torch.multinomial(probs, 1, generator=rng)
+                tokens = torch.cat([tokens, next_tok], dim=1)
+            for i in range(bs):
+                all_tokens.append(tokens[i:i+1])
+    return all_tokens
+
+
+def collect_hessians_from_tokens(model, token_seqs, device):
+    """Collect H = X^T X from pre-generated token sequences.
+    Verbatim from PR #1019 (lines 1104-1137)."""
+    hessians = {}
+    hooks = []
+    for name, module in model.named_modules():
+        if isinstance(module, CastedLinear):
+            param_name = name + ".weight"
+            cols = module.weight.shape[1]
+            hessians[param_name] = torch.zeros(cols, cols, dtype=torch.float32, device='cpu')
+            def make_hook(pname):
+                def hook_fn(module, input, output):
+                    x = input[0].detach().float()
+                    if x.ndim == 3:
+                        x = x.reshape(-1, x.shape[-1])
+                    hessians[pname] += (x.T @ x).cpu()
+                return hook_fn
+            hooks.append(module.register_forward_hook(make_hook(param_name)))
+    model.eval()
+    with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        for seq in token_seqs:
+            x = seq[:, :-1].to(device)
+            y = seq[:, 1:].to(device)
+            model(x, y)
+    for h in hooks:
+        h.remove()
+    num_batches = len(token_seqs)
+    for name in hessians:
+        H = hessians[name]
+        H /= num_batches
+        damp = 0.01 * torch.diag(H).mean().clamp_min(1e-6)
+        H += damp * torch.eye(H.shape[0])
+        hessians[name] = H
+    return hessians
+
+
 def collect_hessians(
     model: nn.Module,
     data_files: str,
@@ -487,7 +547,7 @@ def collect_hessians(
     seq_len: int = 2048,
     batch_size: int = 4,
 ) -> dict[str, Tensor]:
-    """Collect H = X^T X for CastedLinear layers (PR #1019 faithful transplant).
+    """Collect H = X^T X for CastedLinear layers using training data.
 
     Returns dict mapping param_name (e.g. "blocks.0.attn.c_q.weight") -> H (float32, CPU).
     """
@@ -522,17 +582,14 @@ def collect_hessians(
         h.remove()
 
     # Finalize: normalize and damp (PR #1019 lines 1131-1136)
-    n_samples_example = {}
     for name in hessians:
         H = hessians[name]
-        n_samples_example[name] = num_batches * batch_size * seq_len
         H /= num_batches
         damp = 0.01 * torch.diag(H).mean().clamp_min(1e-6)
         H += damp * torch.eye(H.shape[0])
         hessians[name] = H
 
-    print(f"gptq: collected {len(hessians)} Hessians, samples per layer: "
-          f"{dict(list(n_samples_example.items())[:3])}...", flush=True)
+    print(f"gptq: collected {len(hessians)} Hessians", flush=True)
     return hessians
 
 
@@ -1625,12 +1682,23 @@ def main() -> None:
         log0(f"Code size: {code_bytes} bytes")
 
         # --- GPTQ: Hessian collection (rank-0 only) ---
-        log0("gptq: collecting Hessians")
+        ar_calib = bool(int(os.environ.get("GPTQ_AR_CALIB", "0")))
         t_hess = time.perf_counter()
-        hessians = collect_hessians(
-            base_model, args.train_files, device,
-            num_samples=args.gptq_calibration_samples, seq_len=args.train_seq_len, batch_size=4,
-        )
+        if ar_calib:
+            log0("gptq: generating AR self-calibration tokens (64 seqs x 2048, temp=0.8)...")
+            ar_tokens = generate_autoregressive_calib(
+                base_model, device, num_seqs=64, seq_len=args.train_seq_len,
+                vocab_size=args.vocab_size, temperature=0.8, batch_size=8, seed=args.seed,
+            )
+            log0(f"gptq: generated {len(ar_tokens)} sequences, collecting Hessians...")
+            hessians = collect_hessians_from_tokens(base_model, ar_tokens, device)
+            del ar_tokens
+        else:
+            log0("gptq: collecting Hessians from training data")
+            hessians = collect_hessians(
+                base_model, args.train_files, device,
+                num_samples=args.gptq_calibration_samples, seq_len=args.train_seq_len, batch_size=4,
+            )
         log0(f"gptq: {len(hessians)} Hessians in {1000*(time.perf_counter()-t_hess):.0f}ms")
 
         # --- GPTQ: quantization + compress + write (rank-0 only) ---
