@@ -479,30 +479,6 @@ def dequantize_mixed_int6(result: dict[str, Tensor], meta: dict[str, object],
 # GPTQ: HESSIAN COLLECTION + QUANTIZATION
 # -----------------------------
 
-def _make_hessian_hook(hessians: dict[str, Tensor], name: str, n_samples: dict[str, int]):
-    """Create a forward hook that accumulates H = X^T X for a linear layer."""
-    def hook(_module, input, _output):
-        x = input[0].detach().float()
-        if x.ndim > 2:
-            x = x.reshape(-1, x.shape[-1])  # (B*T, D)
-        if name not in hessians:
-            hessians[name] = torch.zeros(x.shape[1], x.shape[1], dtype=torch.float32, device="cpu")
-        hessians[name].add_((x.T @ x).cpu())
-        n_samples[name] = n_samples.get(name, 0) + x.shape[0]
-    return hook
-
-
-def _finalize_hessians(hessians: dict[str, Tensor], num_batches: int) -> dict[str, Tensor]:
-    """Match the PR Hessian preparation path before quantization."""
-    finalized: dict[str, Tensor] = {}
-    for name, H in hessians.items():
-        H = H.float() / max(num_batches, 1)
-        damp = 0.01 * torch.diag(H).mean().clamp_min(1e-6)
-        H = H + damp * torch.eye(H.shape[0], dtype=H.dtype)
-        finalized[name] = H
-    return finalized
-
-
 def collect_hessians(
     model: nn.Module,
     data_files: str,
@@ -511,145 +487,110 @@ def collect_hessians(
     seq_len: int = 2048,
     batch_size: int = 4,
 ) -> dict[str, Tensor]:
-    """Collect H = X^T X for each int6-targeted CastedLinear layer using training data.
+    """Collect H = X^T X for CastedLinear layers (PR #1019 faithful transplant).
 
-    Returns dict mapping module_name (e.g. "blocks.0.attn.c_q") -> H (float32, CPU).
-    Uses forward_logits (no targets needed) and TokenStream (rank-0 only).
+    Returns dict mapping param_name (e.g. "blocks.0.attn.c_q.weight") -> H (float32, CPU).
     """
     hessians: dict[str, Tensor] = {}
-    n_samples: dict[str, int] = {}
-    handles = []
-    skipped_names = []
-    sd_keys = set(model.state_dict().keys())
-
+    hooks: list = []
     for name, module in model.named_modules():
         if isinstance(module, CastedLinear):
-            weight_key = name + ".weight"
-            assert weight_key in sd_keys, f"No state_dict key for {weight_key}"
-            cat = _classify_param(weight_key)
-            if cat not in ("mlp", "attn"):
-                skipped_names.append(name)
-                continue
-            handles.append(module.register_forward_hook(_make_hessian_hook(hessians, name, n_samples)))
+            param_name = name + ".weight"
+            cols = module.weight.shape[1]
+            hessians[param_name] = torch.zeros(cols, cols, dtype=torch.float32, device='cpu')
+            def make_hook(pname):
+                def hook_fn(module, input, output):
+                    x = input[0].detach().float()
+                    if x.ndim == 3:
+                        x = x.reshape(-1, x.shape[-1])
+                    hessians[pname] += (x.T @ x).cpu()
+                return hook_fn
+            hooks.append(module.register_forward_hook(make_hook(param_name)))
 
-    print(f"gptq: hooking {len(handles)} layers, skipped: {skipped_names}", flush=True)
+    print(f"gptq: hooking {len(hooks)} layers", flush=True)
 
-    stream = TokenStream(data_files)
     num_batches = num_samples // batch_size
+    stream = TokenStream(data_files)
     model.eval()
-    with torch.inference_mode():
-        for i in range(num_batches):
+    with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        for _ in range(num_batches):
             tokens = stream.take(batch_size * seq_len).to(device=device, dtype=torch.int64)
             x = tokens.reshape(batch_size, seq_len)
-            with torch.autocast(device_type="cuda", dtype=LOWP_DTYPE, enabled=True):
-                model.forward_logits(x)
+            model.forward_logits(x)
 
-    for h in handles:
+    for h in hooks:
         h.remove()
 
-    result = _finalize_hessians(hessians, num_batches)
-    print(f"gptq: collected {len(result)} Hessians, samples per layer: "
-          f"{dict(list(n_samples.items())[:3])}...", flush=True)
-    return result
+    # Finalize: normalize and damp (PR #1019 lines 1131-1136)
+    n_samples_example = {}
+    for name in hessians:
+        H = hessians[name]
+        n_samples_example[name] = num_batches * batch_size * seq_len
+        H /= num_batches
+        damp = 0.01 * torch.diag(H).mean().clamp_min(1e-6)
+        H += damp * torch.eye(H.shape[0])
+        hessians[name] = H
+
+    print(f"gptq: collected {len(hessians)} Hessians, samples per layer: "
+          f"{dict(list(n_samples_example.items())[:3])}...", flush=True)
+    return hessians
 
 
-def gptq_quantize_layer(
-    W: Tensor,
-    H: Tensor,
-    block_size: int = 128,
-    percdamp: float = 0.01,
-    clip_range: int = 31,
-    actorder: bool = True,
-) -> tuple[Tensor, Tensor, bool, dict[str, object]]:
-    """GPTQ-quantize weight matrix W using the PR-grounded loop.
-
-    Returns (q: int8 in [-clip_range, clip_range], scale: fp16 per-row, degraded: bool, stats).
-    """
-    W_orig = W.float().clone()
-    H = H.float().clone()
-    d_row, d_col = W_orig.shape
-
-    dead = (H.diag() == 0)
-    H[dead, dead] = 1.0
-
-    damp = percdamp * H.diag().mean().clamp_min(1e-6)
-    H.diagonal().add_(damp)
-
-    perm = torch.arange(d_col, device=H.device)
-    if actorder:
-        perm = torch.argsort(H.diag(), descending=True)
-    invperm = torch.argsort(perm)
-    W_perm = W_orig[:, perm].clone()
-    W_perm[:, dead[perm]] = 0.0
+def quantize_int6_gptq(weight, hessian=None, clip_range=31, block_size=128):
+    """Full GPTQ: Hessian-aware int6 quantization with Cholesky error compensation.
+    If hessian is None, falls back to percentile search.
+    Verbatim from PR #1019 (lines 1171-1224)."""
+    t32 = weight.float()
+    if t32.ndim != 2 or hessian is None:
+        return quantize_int6_per_row(t32, clip_range)
+    rows, cols = t32.shape
+    H = hessian.float().clone()
+    dead = torch.diag(H) == 0
+    H[dead, dead] = 1
+    damp = 0.01 * torch.mean(torch.diag(H))
+    H[torch.arange(cols), torch.arange(cols)] += damp
+    perm = torch.argsort(torch.diag(H), descending=True)
+    inv_perm = torch.argsort(perm)
+    W = t32[:, perm].clone()
+    W[:, dead[perm]] = 0
     H = H[perm][:, perm]
-
-    try:
-        Hinv_chol = torch.cholesky_inverse(torch.linalg.cholesky(H))
-        Hinv_chol = torch.linalg.cholesky(Hinv_chol, upper=True)
-    except torch.linalg.LinAlgError:
-        cond_est = H.diag().max().item() / max(H.diag().min().item(), 1e-12)
-        print(f"gptq:WARNING Cholesky failed, cond~{cond_est:.1e}, falling back to naive", flush=True)
-        q, s = quantize_int6_per_row(W_orig, clip_range=clip_range)
-        return q, s, True, {
-            "mse": _quantization_mse(W_orig, q, s),
-            "best_pct": None,
-            "dead_cols": int(dead.sum().item()),
-            "max_block_mse": None,
-            "worst_block_start": None,
-            "cholesky_fallback": True,
-        }
-
-    best_q, best_scale, best_stats = None, None, None
-    best_err = float("inf")
-    for pct, row_clip in _iter_int6_row_clips(W_orig):
-        scale = (row_clip / float(clip_range)).clamp_min(1.0 / float(clip_range)).to(torch.float16)
-        scale_f = scale.float()
-        Q = torch.zeros((d_row, d_col), dtype=torch.int8, device=W_perm.device)
-        W_work = W_perm.clone()
-        max_block_mse = -1.0
-        worst_block_start = 0
-
-        for block_start in range(0, d_col, block_size):
-            block_end = min(block_start + block_size, d_col)
-            W_block = W_work[:, block_start:block_end].clone()
-            Err = torch.zeros((d_row, block_end - block_start), dtype=W_work.dtype, device=W_work.device)
-            Hinv_block = Hinv_chol[block_start:block_end, block_start:block_end]
-
-            for j in range(block_end - block_start):
-                w_col = W_block[:, j]
-                d = Hinv_block[j, j]
-                q_col = torch.clamp(torch.round(w_col / scale_f), -clip_range, clip_range)
-                Q[:, block_start + j] = q_col.to(torch.int8)
-                err = (w_col - q_col.float() * scale_f) / d
-                Err[:, j] = err
-                W_block[:, j:] -= err.unsqueeze(1) * Hinv_block[j, j:].unsqueeze(0)
-
-            if block_end < d_col:
-                W_work[:, block_end:] -= Err @ Hinv_chol[block_start:block_end, block_end:]
-
-            block_recon = Q[:, block_start:block_end].float() * scale_f[:, None]
-            block_mse = float((W_perm[:, block_start:block_end] - block_recon).pow(2).mean().item())
-            if block_mse > max_block_mse:
-                max_block_mse = block_mse
-                worst_block_start = block_start
-
-        recon = Q.float() * scale_f[:, None]
-        mse = float((W_perm - recon).pow(2).mean().item())
+    Hinv = torch.linalg.cholesky(H)
+    Hinv = torch.cholesky_inverse(Hinv)
+    Hinv = torch.linalg.cholesky(Hinv, upper=True)
+    best_q = None; best_scale = None; best_err = float('inf')
+    for pct in [0.9990, 0.9995, 0.9999, 0.99999, 1.0]:
+        if pct < 1.0:
+            row_clip = torch.quantile(t32.abs(), pct, dim=1)
+        else:
+            row_clip = t32.abs().amax(dim=1)
+        s = (row_clip / clip_range).clamp_min(1.0 / clip_range).to(torch.float16)
+        sf = s.float()
+        Q = torch.zeros_like(W, dtype=torch.int8)
+        W_work = W.clone()
+        for i1 in range(0, cols, block_size):
+            i2 = min(i1 + block_size, cols)
+            count = i2 - i1
+            W1 = W_work[:, i1:i2].clone()
+            Q1 = torch.zeros(rows, count, dtype=torch.int8)
+            Err1 = torch.zeros(rows, count)
+            Hinv1 = Hinv[i1:i2, i1:i2]
+            for i in range(count):
+                w = W1[:, i]
+                d = Hinv1[i, i]
+                q = torch.clamp(torch.round(w / sf), -clip_range, clip_range).to(torch.int8)
+                Q1[:, i] = q
+                err = (w - q.float() * sf) / d
+                W1[:, i:] -= err.unsqueeze(1) * Hinv1[i, i:].unsqueeze(0)
+                Err1[:, i] = err
+            Q[:, i1:i2] = Q1
+            if i2 < cols:
+                W_work[:, i2:] -= Err1 @ Hinv[i1:i2, i2:]
+        recon = Q.float() * sf[:, None]
+        mse = (W - recon).pow(2).mean().item()
         if mse < best_err:
-            best_q = Q
-            best_scale = scale
-            best_err = mse
-            best_stats = {
-                "mse": mse,
-                "best_pct": pct,
-                "dead_cols": int(dead.sum().item()),
-                "max_block_mse": max_block_mse,
-                "worst_block_start": worst_block_start,
-                "cholesky_fallback": False,
-            }
-
-    best_q = best_q[:, invperm]
-    return best_q, best_scale, False, best_stats
+            best_q, best_scale, best_err = Q, s, mse
+    best_q = best_q[:, inv_perm]
+    return best_q, best_scale
 
 
 def gptq_mixed_quantize_int6(
@@ -662,8 +603,8 @@ def gptq_mixed_quantize_int6(
 ):
     """Like mixed_quantize_int6, but uses GPTQ for layers with Hessians.
 
-    hessians: dict mapping module_name (e.g. "blocks.0.attn.c_q") -> H tensor.
-    state_dict keys use param names (e.g. "blocks.0.attn.c_q.weight").
+    hessians: dict mapping param_name (e.g. "blocks.0.attn.c_q.weight") -> H tensor.
+    state_dict keys use the same param names.
     """
     result: dict[str, Tensor] = {}
     meta: dict[str, object] = {}
@@ -681,19 +622,16 @@ def gptq_mixed_quantize_int6(
             meta[name] = "passthrough_ctrl"
             continue
         if cat in int6_cats and t.ndim >= 1:
-            module_name = name.rsplit(".weight", 1)[0] if name.endswith(".weight") else name
-            H = hessians.get(module_name)
+            H = hessians.get(name)
             if H is not None and t.ndim == 2:
                 legacy_q, legacy_s = quantize_int6_per_row_legacy(t, clip_range=clip_range)
                 naive_q, naive_s = quantize_int6_per_row(t, clip_range=clip_range)
-                q, s, degraded, gptq_stats = gptq_quantize_layer(
-                    t, H, block_size=block_size, clip_range=clip_range, actorder=actorder,
-                )
+                q, s = quantize_int6_gptq(t, hessian=H, clip_range=clip_range, block_size=block_size)
                 legacy_mse = _quantization_mse(t, legacy_q, legacy_s)
                 naive_mse = _quantization_mse(t, naive_q, naive_s)
-                gptq_mse = float(gptq_stats["mse"])
+                gptq_mse = _quantization_mse(t, q, s)
                 diagnostics.append({
-                    "name": module_name,
+                    "name": name,
                     "legacy_rowmax_mse": legacy_mse,
                     "percentile_naive_mse": naive_mse,
                     "gptq_mse": gptq_mse,
@@ -701,13 +639,8 @@ def gptq_mixed_quantize_int6(
                     "gptq_minus_percentile_naive_mse": gptq_mse - naive_mse,
                     "gptq_worse_than_legacy_rowmax": gptq_mse > legacy_mse,
                     "gptq_worse_than_percentile_naive": gptq_mse > naive_mse,
-                    **gptq_stats,
                 })
-                if degraded:
-                    fallback_count += 1
-                    print(f"gptq: DEGRADED layer {module_name}", flush=True)
-                else:
-                    gptq_count += 1
+                gptq_count += 1
             else:
                 q, s = quantize_int6_per_row(t, clip_range=clip_range)
                 naive_count += 1
@@ -1732,8 +1665,7 @@ def main() -> None:
                 log0(
                     "gptq: legacy_worse "
                     f"{diag['name']} delta_mse:{diag['gptq_minus_legacy_rowmax_mse']:.6e} "
-                    f"gptq_mse:{diag['gptq_mse']:.6e} legacy_mse:{diag['legacy_rowmax_mse']:.6e} "
-                    f"pct:{diag['best_pct']} block:{diag['worst_block_start']}"
+                    f"gptq_mse:{diag['gptq_mse']:.6e} legacy_mse:{diag['legacy_rowmax_mse']:.6e}"
                 )
         if not worse_naive:
             log0("gptq: no layers worse than percentile naive int6")
@@ -1742,8 +1674,7 @@ def main() -> None:
                 log0(
                     "gptq: percentile_worse "
                     f"{diag['name']} delta_mse:{diag['gptq_minus_percentile_naive_mse']:.6e} "
-                    f"gptq_mse:{diag['gptq_mse']:.6e} naive_mse:{diag['percentile_naive_mse']:.6e} "
-                    f"pct:{diag['best_pct']} block:{diag['worst_block_start']}"
+                    f"gptq_mse:{diag['gptq_mse']:.6e} naive_mse:{diag['percentile_naive_mse']:.6e}"
                 )
         del hessians, sd_cpu_r0
 
