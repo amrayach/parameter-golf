@@ -2,20 +2,19 @@
 
 ## Phase
 
-**Session 05f: BigramHash 3072x112 + Warmdown 4000 — smoke, then 8xH100 run.**
+**Session 05g is the active next candidate. 05c-plus remains the best measured branch.**
 
 GPTQ is permanently parked. Focus on naive int6 export only.
 
 ## Immediate next action
 
-1. Smoke 05f on 1xGPU (Pegasus A100-80GB or H100)
-2. If smoke passes, launch 05f on `8xH100`
-3. Compare against both anchor and 05c-plus:
-   - Quality target: sliding s64 val_bpb < 1.1256 (05c-plus was 1.1256, anchor was 1.1290)
-   - Throughput: step_avg within +5ms of anchor (91.37ms) — 05c-plus regressed to 100.39ms
-   - Artifact: <= 16,000,000 bytes
+1. Sync 05g to Pegasus: `git pull` on `/netscratch/$USER/parameter-golf`
+2. Run 1xGPU smoke (see `records/track_non_record_16mb/2026-03-31_05g_xsa8_throughput/README.md`)
+3. If smoke passes, run 8xH100 full
+4. Compare vs 05c-plus: sliding s64 val_bpb, step_avg_ms, artifact size
+5. If 05g recovers throughput while keeping quality, it becomes the new best branch
 
-## What happened in Session 05c-plus (MEASURED)
+## What happened in Session 05c-plus / 05f (MEASURED)
 
 8xH100 result:
 - sliding s64 val_bpb: `1.12557920` (anchor delta: **-0.00347**, positive)
@@ -27,55 +26,41 @@ GPTQ is permanently parked. Focus on naive int6 export only.
 
 Quality-positive but throughput regressed materially. Not a seed-validation branch.
 
-## 05f changes (on 05c-plus base)
+05f 8xH100 follow-up:
+- sliding s64 val_bpb: `1.12660664` (**worse** than 05c-plus by `+0.00103`)
+- pre_quant EMA: `1.14190308`
+- int6 roundtrip: `1.15026661`
+- step_avg: `100.51 ms` (no throughput recovery)
+- artifact: `15,630,854` bytes (+41,583 vs 05c-plus)
 
-| Change | Type | Risk |
-|--------|------|------|
-| BigramHash vocab 2048→3072 | constant | low (hash collision reduction) |
-| BigramHash dim 128→112 | constant | low (offsets param increase) |
-| Warmdown 3500→4000 | constant | none |
+Conclusion: 05f is negative. Do not continue that line.
 
-Base: 05c-plus (`records/track_non_record_16mb/2026-03-30_training_bundle_plus/train_gpt.py`)
+## Current diagnostic workflow
+
+Artifacts:
+- `diagnostics/2026-03-31_05c_plus/final_model.pt`
+- `diagnostics/2026-03-31_05c_plus/final_model.int6.ptz`
+- `diagnostics/2026-03-31_05c_plus/train.log`
+- `diagnostics/2026-03-31_05c_plus/diagnostics_float.txt`
+- `diagnostics/2026-03-31_05c_plus/diagnostics_int6.txt`
+
+Utility:
+- `diagnose_weights.py`
+
+Approaches:
+- single-checkpoint weight statistics:
+  - `python diagnose_weights.py final_model.pt`
+- float-vs-int6 comparison on the same checkpoint:
+  - `python diagnose_weights.py final_model.pt final_model.int6.ptz`
+- interpret both reports together with the measured 05c-plus / 05f logs before choosing the next branch
+
+Scope:
+- useful for weight norms, outliers, sparsity, SmearGate / VE / Bigram scale inspection, and float-vs-int6 damage proxies
+- not sufficient for activation-level claims by itself
 
 ## Files to read first
 
 1. `docs/campaign/AGENT_SYNC.md`
 2. `CLAUDE.md`
-3. `records/track_non_record_16mb/2026-03-31_05f_refine_bigram3072_warmdown4000/train_gpt.py`
-4. `records/track_non_record_16mb/2026-03-31_05f_refine_bigram3072_warmdown4000/README.md`
-
-## 1xGPU smoke command
-
-```bash
-cd /netscratch/$USER/parameter-golf && git pull
-
-srun -K -p A100-80GB --nodes=1 --ntasks=1 --gpus-per-task=1 \
-  --cpus-per-task=6 --mem=80G --time=00:10:00 \
-  --container-image=/enroot/nvcr.io_nvidia_pytorch_26.03-py3.sqsh \
-  --container-mounts="$(pwd)":"$(pwd)" --container-workdir="$(pwd)" \
-  bash -c '
-    export PYTHONUNBUFFERED=1
-    export ITERATIONS=100 MAX_WALLCLOCK_SECONDS=120
-    pip install --no-cache-dir sentencepiece zstandard 2>/dev/null
-    python -u records/track_non_record_16mb/2026-03-31_05f_refine_bigram3072_warmdown4000/train_gpt.py
-  '
-```
-
-## 8xH100 launch command
-
-```bash
-cd /netscratch/$USER/parameter-golf && git pull
-
-srun -K -p H100 --nodes=1 --ntasks=8 --gpus-per-task=1 --gpu-bind=none --cpus-per-task=6 \
-  --mem=200G --time=00:20:00 \
-  --container-image=/enroot/nvcr.io_nvidia_pytorch_26.03-py3.sqsh \
-  --container-mounts="$(pwd)":"$(pwd)" --container-workdir="$(pwd)" \
-  bash -c '
-    export LOCAL_RANK=$SLURM_LOCALID RANK=$SLURM_PROCID WORLD_SIZE=$SLURM_NTASKS
-    export PYTHONUNBUFFERED=1
-    export MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 OMP_NUM_THREADS=1
-    export NCCL_IB_DISABLE=1 NCCL_SOCKET_IFNAME=bond,eth NCCL_P2P_LEVEL=NVL
-    pip install --no-cache-dir sentencepiece zstandard 2>/dev/null
-    python -u records/track_non_record_16mb/2026-03-31_05f_refine_bigram3072_warmdown4000/train_gpt.py
-  '
-```
+3. `records/track_non_record_16mb/2026-03-31_05g_xsa8_throughput/README.md`
+4. `records/track_non_record_16mb/2026-03-31_05g_xsa8_throughput/train_gpt.py` (diff vs 05c-plus: xsa_last_n 11→8 only)

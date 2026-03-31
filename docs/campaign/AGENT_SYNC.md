@@ -4,9 +4,11 @@ Date: 2026-03-31
 
 ## Current Objective
 
-Smoke and run Session 05f (BigramHash 3072x112 + warmdown 4000) on 8xH100.
+Session 05g (XSA-8 throughput recovery) is the active next candidate. 05c-plus remains the best measured branch.
 
-Session 05c-plus is **measured and quality-positive** (sliding s64 `1.12558`, delta `-0.00347` vs anchor) but throughput regressed (`100.39 ms`, +9ms). 05f is the next prepared candidate on that base.
+Session 05c-plus is **measured and quality-positive** (sliding s64 `1.12558`, delta `-0.00347` vs anchor) but throughput regressed (`100.39 ms`, +9ms).
+Session 05f is **measured and worse than 05c-plus** (`1.12661`, delta `+0.00103` vs 05c-plus) with no throughput recovery.
+Session 05g reduces `xsa_last_n` from 11 to 8 on the 05c-plus base to test whether partial XSA scope reduction recovers throughput while retaining quality.
 
 GPTQ is **permanently parked** — failed on both relu² anchor (7 ablations) and leaky_relu² 05c-plus (05e probe: 44/66 layers worse than naive).
 
@@ -46,18 +48,56 @@ SWA is **not included** — dead code in both PR #1019 and #634 (collected but o
 | steps | 5977 | 6564 | -587 |
 | bytes_total | 15,589,271 | 15,751,324 | -162,053 |
 
-**Assessment**: Quality-positive (sliding s64 improved by 0.00347 despite 587 fewer steps). Throughput regressed materially (+9ms, exceeds the +5ms gate). Not a seed-validation branch yet. The quality improvement justifies 05f as the next smoke candidate.
+**Assessment**: Quality-positive (sliding s64 improved by 0.00347 despite 587 fewer steps). Throughput regressed materially (+9ms, exceeds the +5ms gate). Not a seed-validation branch yet. 05c-plus remains the best measured branch even after the 05f follow-up failed to improve it.
 
-### Phase 3: Session 05f refinement (PREPARED)
+### Phase 3: Session 05f refinement (MEASURED — NEGATIVE vs 05c-plus)
 
 Code: `records/track_non_record_16mb/2026-03-31_05f_refine_bigram3072_warmdown4000/train_gpt.py`
 
-Two additional changes on the 05c-plus base:
+Three additional changes on the 05c-plus base:
 1. **BigramHash vocab 2048 → 3072** — reduces hash collisions
 2. **BigramHash dim 128 → 112** — partially offsets parameter increase
 3. **Warmdown 3500 → 4000** — more gradual cooldown
 
-Next step: smoke 05f on 1xGPU, then launch on 8xH100 if smoke passes.
+#### 8xH100 measured result (2026-03-31)
+
+| Metric | 05f | 05c-plus | Delta vs 05c-plus |
+|--------|-----|----------|-------------------|
+| sliding s64 val_bpb | **1.12660664** | 1.12557920 | **+0.00103** |
+| pre_quant EMA exact | 1.14190308 | 1.14186715 | +0.00004 |
+| int6 roundtrip exact | 1.15026661 | 1.14933197 | +0.00093 |
+| step_avg_ms | 100.51 | 100.39 | +0.12 |
+| steps | 5977 | 5977 | 0 |
+| bytes_total | 15,630,854 | 15,589,271 | +41,583 |
+
+**Assessment**: Negative follow-up. BigramHash 3072x112 + warmdown 4000 did not improve 05c-plus and did not recover throughput. 05c-plus remains the best measured branch in this line.
+
+### Phase 4: Checkpoint diagnostics (DONE — conclusions below)
+
+Diagnostic conclusions (from 05c-plus and 05f checkpoint analysis):
+- Export / quantization is not the current bottleneck
+- 05c-plus and 05f have nearly identical float→int6 damage profiles
+- No strong late-block-only quantization hotspot
+- mlp.proj zeroing is real but diffuse, not the next tactical lever
+- 05f failed because of training-side changes, not quantization
+- VE is alive enough to keep
+- Bigram is not the next lever
+- XSA scope is the first knob to relax for throughput recovery
+
+### Phase 5: Session 05g — XSA-8 throughput recovery (NEXT)
+
+Code: `records/track_non_record_16mb/2026-03-31_05g_xsa8_throughput/train_gpt.py`
+
+Single change on the 05c-plus base:
+- `xsa_last_n` 11 → 8 (XSA on layers 3-10, removed from layers 0-2)
+
+Hypothesis: XSA scope increase (4→11) is the leading contributor to the +9ms throughput regression. Reducing to 8 should partially recover throughput while retaining most of the quality gain.
+
+Next steps:
+1. Sync to Pegasus: `git pull` on `/netscratch/$USER/parameter-golf`
+2. Run 1xGPU smoke (see README in 05g folder)
+3. If smoke passes, run 8xH100 full (see README in 05g folder)
+4. Compare vs 05c-plus on sliding s64, step_avg_ms, and artifact size
 
 ### Phase 2: GPTQ probe on 05c-plus architecture (DONE — NEGATIVE)
 
@@ -124,10 +164,13 @@ GPTQ is now parked permanently for this model family. The activation function is
 - Shared mutable state: `docs/campaign/AGENT_SYNC.md`
 - Append-only measured results: `docs/campaign/results_log.jsonl`
 - Stable rules: `CLAUDE.md`
+- Checkpoint diagnostic utility: `diagnose_weights.py`
 - 05c-plus plan: `docs/superpowers/plans/2026-03-30-session-05c-plus.md`
 - 05c-plus code: `records/track_non_record_16mb/2026-03-30_training_bundle_plus/train_gpt.py`
+- 05f follow-up: `records/track_non_record_16mb/2026-03-31_05f_refine_bigram3072_warmdown4000/`
 - GPTQ experiment (parked): `records/track_non_record_16mb/2026-03-29_full_hessian_gptq/`
 - GPTQ probe on 05c-plus: `records/track_non_record_16mb/2026-03-31_05e_gptq_probe/`
+- 05c-plus checkpoint diagnostics: `diagnostics/2026-03-31_05c_plus/`
 - Codex memory:
   - `docs/codex-memory/decisions.md`
   - `docs/codex-memory/project-state.md`

@@ -32,10 +32,11 @@ For deep context (campaign strategy, prior experiments, hardware state):
 
 ## Current Working Mode
 
-- Active goal: smoke and run Session 05f (BigramHash 3072x112 + warmdown 4000) on `8xH100`
-- Code: `records/track_non_record_16mb/2026-03-31_05f_refine_bigram3072_warmdown4000/train_gpt.py`
-- Base: 05c-plus (XSA-all + VE128 + warmdown 3500 + LeakyReLU(0.5)²)
+- Active goal: run Session 05g (XSA-8 throughput recovery) and compare against 05c-plus
+- Best measured branch: `records/track_non_record_16mb/2026-03-30_training_bundle_plus/train_gpt.py` (05c-plus)
+- Active candidate: `records/track_non_record_16mb/2026-03-31_05g_xsa8_throughput/train_gpt.py`
 - 05c-plus result: quality-positive (sliding s64 `1.12558`, delta `-0.00347`), throughput regressed (`100.39 ms`, +9ms)
+- 05f result: negative vs 05c-plus (sliding s64 `1.12661`, delta `+0.00103`)
+- 05g change: `xsa_last_n` 11 → 8 on 05c-plus base
 - GPTQ status: permanently parked
-- Next phase: 1xGPU smoke for 05f, then 8xH100 run if smoke passes
 - Out of scope: FA3, TTT, SWA, GPTQ, Parallel Muon, Parameter Banking, Late QAT, LZMA
