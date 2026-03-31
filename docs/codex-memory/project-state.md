@@ -1,19 +1,19 @@
 # Project State
 
-Date: 2026-03-30
+Date: 2026-03-31
 
 ## Objective
 
 Primary:
-- run Session 05c-plus training bundle on `8xH100` and measure quality improvement over the Session 03 anchor
-- target sliding s64 val_bpb < 1.126 (anchor is 1.129)
+- smoke and run Session 05f (BigramHash 3072x112 + warmdown 4000) on `8xH100`
+- base: 05c-plus, which measured quality-positive (sliding s64 `1.12558`, delta `-0.00347`) but throughput-regressed (`100.39 ms`)
 
 Secondary:
 - keep the Session 03 anchor as the fixed reference
 - preserve exact launch, logging, artifact, and evaluation discipline
 
-Stretch:
-- if 05c-plus checkpoint trains well, port VE128 + LeakyReLU² into GPTQ script and test GPTQ replay on the new architecture
+Completed:
+- Session 05e GPTQ probe: **negative result** (44/66 layers worse than naive). GPTQ permanently parked.
 
 ## Current campaign state
 
@@ -24,7 +24,9 @@ Stretch:
   - `AGENTS.md`
   - `CLAUDE.md`
 - Session 03 anchor run is complete
-- Session 05b GPTQ implementation exists but currently fails its smoke-test correctness gate
+- Session 05b GPTQ implementation exists but is parked on the current anchor after 7 conclusive ablations
+- Session 05c-plus code and smoke harness are implemented and pushed
+- Session 05e same-checkpoint export-only replay completed and closed the GPTQ question for this model family
 
 ## Verified hardware state
 
@@ -55,6 +57,13 @@ Stretch:
   - steps: `6564`, step_avg: `91.37 ms`
   - artifact: `15751324` bytes (model `15692752` + code `58572`)
   - GPU: `8xH100 SXM5`, `serv-3342`, NGC 26.03 container
+- `8xH100` Session 05c-plus (quality-positive, throughput regressed):
+  - sliding s64 val_bpb: `1.12557920` (anchor delta: **-0.00347**)
+  - pre-quant EMA val_bpb: `1.14186715`
+  - int6 roundtrip val_bpb: `1.14933197`
+  - steps: `5977`, step_avg: `100.39 ms` (+9.02ms vs anchor)
+  - artifact: `15589271` bytes
+  - GPU: `8xH100`, NGC 26.03 container
 
 ## Launcher lesson
 
@@ -87,6 +96,11 @@ Do not use:
 - The first `1xH100` GPTQ smoke successfully exercised Hessian collection, quantization, compression, reload, and eval.
 - That same smoke also exposed a correctness failure in the current GPTQ quantizer: roundtrip exact `1.68963326` vs pre-quant exact `1.47753094`.
 - The first replay-based Hessian repair also failed: `replay_ref_hfix` reached `2.15770170` from pre-quant `1.82064877`, with `gptq_diag` still reporting `66/66` layers worse than both naive baselines.
+- The 05e architecture probe also failed to rescue GPTQ on the new stack:
+  - pre-quant exact `3.95543154`
+  - naive roundtrip exact `3.96902897`
+  - GPTQ roundtrip exact `3.96902897`
+  - `worse_than_naive_rowmax = 44/66`
 
 ## Session 05b: Full Hessian GPTQ (2026-03-29)
 
@@ -125,20 +139,16 @@ Do not use:
 
 ## What has not happened yet
 
-- no correct Full Hessian GPTQ result yet
-- no same-checkpoint naive-vs-GPTQ export A/B yet
-- no runtime validation of the repaired PR-grounded quantizer yet
-- no successful GPTQ replay after the smaller Hessian-path repair
 - no vendor-tuned NGC FA3 runtime result yet
 - no top-tier leaderboard-adjacent result yet
-- no measured VE128 delta yet
+- no seed-validation run yet for 05c-plus (throughput regression makes it premature)
+- no 05f (bigram3072 + warmdown4000) smoke or run yet
 
 ## Best next move
 
-- **Commit, push, and launch Session 05c-plus on 8xH100** — code is implemented and validated
-- Code: `records/track_non_record_16mb/2026-03-30_training_bundle_plus/train_gpt.py`
-- Bundle: XSA-all + VE128 (layers 9-10) + warmdown 3500 + LeakyReLU(0.5)²
-- Base: Session 03 anchor (not Session 05b)
-- SWA excluded (dead code in references), GPTQ excluded (parked, requires separate merge step)
-- After 05c-plus results: evaluate naive int6 first, then consider GPTQ port if results warrant it
-- Do not spend time on FA3 or TTT until 05c-plus training quality is measured
+- **Smoke 05f on 1xGPU, then launch on 8xH100 if smoke passes**
+- Code: `records/track_non_record_16mb/2026-03-31_05f_refine_bigram3072_warmdown4000/train_gpt.py`
+- Base: 05c-plus (XSA-all + VE128 + warmdown 3500 + LeakyReLU(0.5)²)
+- Additional changes: BigramHash 2048→3072, dim 128→112, warmdown 3500→4000
+- 05c-plus measured quality-positive (sliding s64: 1.12558, delta -0.00347 vs anchor) but throughput regressed (+9ms)
+- SWA excluded (dead code), GPTQ excluded (permanently parked)

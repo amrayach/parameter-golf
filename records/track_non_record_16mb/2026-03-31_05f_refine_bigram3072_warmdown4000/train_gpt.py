@@ -1,14 +1,16 @@
 """
-Session 05c-plus: Training Bundle on Session 03 Anchor
+Session 05f: BigramHash 3072x112 + Warmdown 4000 on 05c-plus base
 
-Four training-quality improvements stacked on the Session 03 anchor:
-  1. warmdown 3000 → 3500
+Six training-quality changes stacked on the Session 03 anchor:
+  1. warmdown 3000 → 4000
   2. XSA 4 → 11 (all layers)
   3. VE128 on layers 9-10 (shared ValueEmbedding)
   4. LeakyReLU(0.5)² (replaces ReLU² in MLP)
+  5. BigramHash vocab 2048 → 3072
+  6. BigramHash dim 128 → 112
 
-SWA not included (dead code in both PR #1019 and #634).
-GPTQ not included (parked after 7 ablations).
+Base: 05c-plus (records/track_non_record_16mb/2026-03-30_training_bundle_plus/train_gpt.py)
+Prepared candidate — not mainline unless 05c-plus results justify promotion.
 """
 
 from __future__ import annotations
@@ -65,7 +67,7 @@ class Hyperparameters:
     amp_dtype = os.environ.get("AMP_DTYPE", "auto").strip().lower()
 
     # Anchor-locked constants (not env-var-driven)
-    warmdown_iters = 3500
+    warmdown_iters = 4000
     warmup_steps = 20
     train_batch_tokens = 786_432
     train_seq_len = 2048
@@ -100,8 +102,8 @@ class Hyperparameters:
     ema_decay = 0.997
     eval_stride = int(os.environ.get("EVAL_STRIDE", 64))
 
-    bigram_vocab_size = 2048
-    bigram_dim = 128
+    bigram_vocab_size = 3072
+    bigram_dim = 112
     xsa_last_n = 11
     rope_dims = 16
     ln_scale = True

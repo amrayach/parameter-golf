@@ -13,7 +13,8 @@
 - The next `8xH100` runs must be actual model changes.
 - Session 03 pre-TTT anchor work is complete at `val_bpb=1.12904446` (sliding s64) on Pegasus `8xH100`.
 - Session 04 targeted delta sweep is closed.
-- Session 05 mainline is now **GPTQ correctness first**, not throughput audit first.
+- Session 05 initially shifted to **GPTQ correctness first**, but that branch is now parked on the old anchor.
+- Current Session 05 mainline is **05c-plus training quality first**.
 
 ## Session 03 decisions
 
@@ -132,6 +133,19 @@
 2. **Base is Session 03 anchor, not Session 05b.** The 05c prompt allowed stacking on 05b if GPTQ graduated. GPTQ is parked after 7 ablations, so the base is the clean anchor (`records/track_non_record_16mb/2026-03-28_pre_ttt_anchor/train_gpt.py`). This keeps the diff narrow and avoids dragging GPTQ debug complexity into a training run.
 3. **GPTQ replay requires a separate merge step.** The 05c-plus training script adds VE parameters and changes the MLP activation. The parked Session 05b GPTQ script has the old architecture. A 05c-plus checkpoint cannot be replayed through the current 05b export path without porting VE128 + LeakyReLU² into the GPTQ script first. This is Phase 2 work, gated on 05c-plus training results.
 4. **VE proj uses orthogonal init (not zero init).** The reference implementation's `nn.init.zeros_` in the VE constructor is dead code — overwritten by `_init_weights` with orthogonal + proj scaling. Our implementation matches: no `_zero_init` flag on VE proj, so `_init_weights` applies `orthogonal_(gain=1.0) * (1/sqrt(22))`. VE output is still small at init due to the learnable `scale=0.1`.
+
+## Session 05e decisions (2026-03-31)
+
+1. **GPTQ probe created as bounded falsification test.** Session 05e merges the 05b GPTQ machinery into the 05c-plus base (VE128 + LeakyReLU(0.5)²). Kill criteria pre-defined: park permanently if worse_than_legacy_rowmax > 50%, unblocked if < 10 AND gap < 0.02 BPB. Code: `records/track_non_record_16mb/2026-03-31_05e_gptq_probe/`.
+2. **AR self-gen calibration excluded.** Crashed with non-PD Hessian in ablation #7. Only training-data calibration ported.
+3. **GPTQ permanently parked (2026-03-31).** Probe result: worse_than_naive_rowmax=44/66 (67%). Same-checkpoint export-only replay was flat vs naive: pre-quant exact `3.95543154`, naive roundtrip exact `3.96902897`, GPTQ roundtrip exact `3.96902897`. LeakyReLU(0.5)² + VE128 did not unblock GPTQ. The RTXA6000 speed only affected wall time; it does not change the same-checkpoint export comparison. The activation function is not the root cause. Do not revisit GPTQ for this model family.
+
+## Session 05c-plus 8xH100 result (2026-03-31)
+
+1. **Quality-positive, throughput regressed.** Sliding s64 val_bpb `1.12557920` vs anchor `1.12904446` (delta `-0.00347`). Pre-quant EMA `1.14186715` and int6 roundtrip `1.14933197` both improved. But `step_avg=100.39ms` exceeds the anchor's `91.37ms` by `+9.02ms`, costing 587 training steps (5977 vs 6564). The quality gain came despite fewer steps, suggesting VE128 + XSA-all + warmdown extension are genuinely better architecturally.
+2. **Not a seed-validation branch yet.** The throughput regression exceeds the `+5ms` gate. The branch is quality-positive but cannot be promoted to seed validation without addressing throughput.
+3. **05f promoted to next smoke candidate.** BigramHash 3072x112 + warmdown 4000 on the 05c-plus base. The quality gain justifies exploring further refinements on this architecture. Code: `records/track_non_record_16mb/2026-03-31_05f_refine_bigram3072_warmdown4000/`.
+4. **Do not reopen GPTQ.** The 05c-plus architecture's positive quality result does not change the GPTQ parking decision — the export-only probe (05e) already tested this exact architecture.
 
 ## Hard gates
 

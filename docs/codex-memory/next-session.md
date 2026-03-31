@@ -2,62 +2,64 @@
 
 ## Phase
 
-**Session 05c-plus: Training bundle implementation and 8xH100 run.**
+**Session 05f: BigramHash 3072x112 + Warmdown 4000 — smoke, then 8xH100 run.**
 
-GPTQ debugging is parked. The next session is a training-quality implementation session.
+GPTQ is permanently parked. Focus on naive int6 export only.
 
 ## Immediate next action
 
-1. **Commit and push** `records/track_non_record_16mb/2026-03-30_training_bundle_plus/` — code is implemented and validated
-2. Run on 8xH100 when a slot opens (launch command in README)
-3. After training: evaluate with naive int6 export (built into the script)
-4. GPTQ replay is a **separate Phase 2 step** requiring a merge (VE128 + LeakyReLU² into GPTQ script)
+1. Smoke 05f on 1xGPU (Pegasus A100-80GB or H100)
+2. If smoke passes, launch 05f on `8xH100`
+3. Compare against both anchor and 05c-plus:
+   - Quality target: sliding s64 val_bpb < 1.1256 (05c-plus was 1.1256, anchor was 1.1290)
+   - Throughput: step_avg within +5ms of anchor (91.37ms) — 05c-plus regressed to 100.39ms
+   - Artifact: <= 16,000,000 bytes
 
-## What happened in Session 05b (PARKED)
+## What happened in Session 05c-plus (MEASURED)
 
-Seven GPTQ ablations on the Session 03 checkpoint all failed:
-- Ablation #6 (PR #1019 verbatim transplant) produced **byte-identical MSE** to the local code
-- This proved the GPTQ code is correct — the failure is model-specific
-- Ablation #7 (AR self-gen calibration) crashed with non-PD Hessian
-- Root cause hypothesis: relu().square() creates sparse Hessians; leaky_relu(0.5).square() does not
+8xH100 result:
+- sliding s64 val_bpb: `1.12557920` (anchor delta: **-0.00347**, positive)
+- pre_quant EMA: `1.14186715`
+- int6 roundtrip: `1.14933197`
+- step_avg: `100.39 ms` (+9.02ms vs anchor, **regressed**)
+- steps: `5977` (587 fewer than anchor due to throughput)
+- artifact: `15,589,271` bytes
 
-## Key finding: SWA is dead code
+Quality-positive but throughput regressed materially. Not a seed-validation branch.
 
-Both PR #1019 and #634 collect SWA snapshots but only apply EMA at export.
-SWA is NOT included in the 05c-plus bundle. Use EMA only.
-
-## 05c-plus bundle details
+## 05f changes (on 05c-plus base)
 
 | Change | Type | Risk |
 |--------|------|------|
-| XSA 4→11 | one constant | very low |
-| VE128 layers 9-10 | new module | low |
-| Warmdown 3500 | one constant | none |
-| LeakyReLU(0.5)² | one line | low (quality-neutral in isolation) |
+| BigramHash vocab 2048→3072 | constant | low (hash collision reduction) |
+| BigramHash dim 128→112 | constant | low (offsets param increase) |
+| Warmdown 3500→4000 | constant | none |
 
-Base: Session 03 anchor (`records/track_non_record_16mb/2026-03-28_pre_ttt_anchor/train_gpt.py`)
-
-## Decision gate after run
-
-1. Evaluate the run with naive int6 export (built into script)
-2. If val_bpb improves: port VE128 + LeakyReLU² into GPTQ script, then test GPTQ replay
-3. If GPTQ is sane → continue from there
-4. If GPTQ is still bad → park permanently, keep naive-int6 result
-
-## Success criteria
-
-- Sliding s64 val_bpb < 1.126 (anchor is 1.129)
-- Pre-quant EMA val_bpb < 1.142 (anchor is 1.145)
-- step_avg within +5ms of anchor (91.37 ms)
-- Artifact <= 16,000,000 bytes
+Base: 05c-plus (`records/track_non_record_16mb/2026-03-30_training_bundle_plus/train_gpt.py`)
 
 ## Files to read first
 
 1. `docs/campaign/AGENT_SYNC.md`
 2. `CLAUDE.md`
-3. `docs/superpowers/plans/2026-03-30-session-05c-plus.md`
-4. `records/track_non_record_16mb/2026-03-30_training_bundle_plus/train_gpt.py` (if created)
-5. PR #1019 reference: `pr-1019-gptq:records/track_10min_16mb/2026-03-25_ValCalib_GPTQ_XSA_BigramHash3072/train_gpt.py`
+3. `records/track_non_record_16mb/2026-03-31_05f_refine_bigram3072_warmdown4000/train_gpt.py`
+4. `records/track_non_record_16mb/2026-03-31_05f_refine_bigram3072_warmdown4000/README.md`
+
+## 1xGPU smoke command
+
+```bash
+cd /netscratch/$USER/parameter-golf && git pull
+
+srun -K -p A100-80GB --nodes=1 --ntasks=1 --gpus-per-task=1 \
+  --cpus-per-task=6 --mem=80G --time=00:10:00 \
+  --container-image=/enroot/nvcr.io_nvidia_pytorch_26.03-py3.sqsh \
+  --container-mounts="$(pwd)":"$(pwd)" --container-workdir="$(pwd)" \
+  bash -c '
+    export PYTHONUNBUFFERED=1
+    export ITERATIONS=100 MAX_WALLCLOCK_SECONDS=120
+    pip install --no-cache-dir sentencepiece zstandard 2>/dev/null
+    python -u records/track_non_record_16mb/2026-03-31_05f_refine_bigram3072_warmdown4000/train_gpt.py
+  '
+```
 
 ## 8xH100 launch command
 
@@ -74,6 +76,6 @@ srun -K -p H100 --nodes=1 --ntasks=8 --gpus-per-task=1 --gpu-bind=none --cpus-pe
     export MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 OMP_NUM_THREADS=1
     export NCCL_IB_DISABLE=1 NCCL_SOCKET_IFNAME=bond,eth NCCL_P2P_LEVEL=NVL
     pip install --no-cache-dir sentencepiece zstandard 2>/dev/null
-    python -u records/track_non_record_16mb/2026-03-30_training_bundle_plus/train_gpt.py
+    python -u records/track_non_record_16mb/2026-03-31_05f_refine_bigram3072_warmdown4000/train_gpt.py
   '
 ```

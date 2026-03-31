@@ -1,13 +1,14 @@
 # Agent Sync
 
-Date: 2026-03-30
+Date: 2026-03-31
 
 ## Current Objective
 
-Implement and run Session 05c-plus training bundle on 8xH100.
+Smoke and run Session 05f (BigramHash 3072x112 + warmdown 4000) on 8xH100.
 
-GPTQ is **parked** for the current model stack after 7 conclusive ablations.
-The next compute allocation is a training-quality run, not more GPTQ debugging.
+Session 05c-plus is **measured and quality-positive** (sliding s64 `1.12558`, delta `-0.00347` vs anchor) but throughput regressed (`100.39 ms`, +9ms). 05f is the next prepared candidate on that base.
+
+GPTQ is **permanently parked** — failed on both relu² anchor (7 ablations) and leaky_relu² 05c-plus (05e probe: 44/66 layers worse than naive).
 
 ## Challenge Reality
 
@@ -21,7 +22,7 @@ The next compute allocation is a training-quality run, not more GPTQ debugging.
 
 ## Current Mainline Plan
 
-### Phase 1: Session 05c-plus training bundle (ACTIVE)
+### Phase 1: Session 05c-plus training bundle (MEASURED — quality positive, throughput regressed)
 
 Plan: `docs/superpowers/plans/2026-03-30-session-05c-plus.md`
 Code: `records/track_non_record_16mb/2026-03-30_training_bundle_plus/train_gpt.py`
@@ -34,17 +35,40 @@ Four changes on the Session 03 anchor:
 
 SWA is **not included** — dead code in both PR #1019 and #634 (collected but only EMA applied).
 
-Target: sliding s64 val_bpb < 1.126 (vs anchor 1.129)
+#### 8xH100 measured result (2026-03-31)
 
-### Phase 2: GPTQ test on new checkpoint (NOT YET EXECUTABLE)
+| Metric | 05c-plus | Anchor | Delta |
+|--------|----------|--------|-------|
+| sliding s64 val_bpb | **1.12557920** | 1.12904446 | **-0.00347** |
+| pre_quant EMA exact | 1.14186715 | 1.14472403 | -0.00286 |
+| int6 roundtrip exact | 1.14933197 | 1.15247273 | -0.00314 |
+| step_avg_ms | **100.39** | 91.37 | **+9.02** |
+| steps | 5977 | 6564 | -587 |
+| bytes_total | 15,589,271 | 15,751,324 | -162,053 |
 
-After 05c-plus training completes:
-1. Evaluate with naive int6 export first (already in 05c-plus script)
-2. To run GPTQ replay: must first port VE128 + LeakyReLU² into the GPTQ export script
-   - The parked Session 05b script (`2026-03-29_full_hessian_gptq/train_gpt.py`) has the old architecture (no VE, relu²)
-   - A merge step is required before GPTQ replay can load a 05c-plus checkpoint
-3. If GPTQ is sane → continue from there
-4. If GPTQ is still bad → park permanently, keep naive-int6 result
+**Assessment**: Quality-positive (sliding s64 improved by 0.00347 despite 587 fewer steps). Throughput regressed materially (+9ms, exceeds the +5ms gate). Not a seed-validation branch yet. The quality improvement justifies 05f as the next smoke candidate.
+
+### Phase 3: Session 05f refinement (PREPARED)
+
+Code: `records/track_non_record_16mb/2026-03-31_05f_refine_bigram3072_warmdown4000/train_gpt.py`
+
+Two additional changes on the 05c-plus base:
+1. **BigramHash vocab 2048 → 3072** — reduces hash collisions
+2. **BigramHash dim 128 → 112** — partially offsets parameter increase
+3. **Warmdown 3500 → 4000** — more gradual cooldown
+
+Next step: smoke 05f on 1xGPU, then launch on 8xH100 if smoke passes.
+
+### Phase 2: GPTQ probe on 05c-plus architecture (DONE — NEGATIVE)
+
+Session 05e: `records/track_non_record_16mb/2026-03-31_05e_gptq_probe/`
+- Pre-quant EMA exact replay: `3.95543154`
+- Naive int6 roundtrip exact replay: `3.96902897`
+- GPTQ int6 roundtrip exact replay: `3.96902897`
+- Result: **worse_than_naive_rowmax = 44/66 (67%)** — kill threshold exceeded
+- No same-checkpoint BPB gain over naive replay
+- LeakyReLU(0.5)² + VE128 did NOT unblock GPTQ
+- GPTQ parked permanently for this model family
 
 ### Parked
 
@@ -69,6 +93,22 @@ Seven ablations on the same Session 03 checkpoint:
 
 Key conclusion: ablation #6 proves the GPTQ code is functionally correct. The failure is model-specific, not a code bug. PR #1019 uses `leaky_relu(0.5)` while our anchor uses `relu`.
 
+### Session 05e GPTQ Probe: Falsification Result (2026-03-31)
+
+Tested whether LeakyReLU(0.5)² + VE128 unblocks GPTQ. **It does not.**
+
+- Architecture: 05c-plus (warmdown 3500, XSA 11, VE128, LeakyReLU(0.5)²)
+- 66 layers GPTQ'd, 68 Hessians collected
+- **worse_than_naive_rowmax = 44/66 (67%)** — exceeds 50% kill threshold
+- Same-checkpoint replay was flat vs naive:
+  - pre-quant exact: `3.95543154`
+  - naive roundtrip exact: `3.96902897`
+  - GPTQ roundtrip exact: `3.96902897`
+- Hessian collection: 2979ms, GPTQ quantization: 31488ms
+- Hardware: RTXA6000 serv-2108 (export-only comparison, GPU speed irrelevant)
+
+GPTQ is now parked permanently for this model family. The activation function is not the root cause.
+
 ## Fixed Reference Results
 
 - Session 03 anchor (`8xH100`, `serv-3342`)
@@ -82,10 +122,12 @@ Key conclusion: ablation #6 proves the GPTQ code is functionally correct. The fa
 ## Canonical Files
 
 - Shared mutable state: `docs/campaign/AGENT_SYNC.md`
+- Append-only measured results: `docs/campaign/results_log.jsonl`
 - Stable rules: `CLAUDE.md`
 - 05c-plus plan: `docs/superpowers/plans/2026-03-30-session-05c-plus.md`
 - 05c-plus code: `records/track_non_record_16mb/2026-03-30_training_bundle_plus/train_gpt.py`
 - GPTQ experiment (parked): `records/track_non_record_16mb/2026-03-29_full_hessian_gptq/`
+- GPTQ probe on 05c-plus: `records/track_non_record_16mb/2026-03-31_05e_gptq_probe/`
 - Codex memory:
   - `docs/codex-memory/decisions.md`
   - `docs/codex-memory/project-state.md`

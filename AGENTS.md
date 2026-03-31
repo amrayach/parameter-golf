@@ -1,11 +1,15 @@
 # Shared Agent Entry Point
 
-Start here for both Claude Code and Codex.
+Start here for Claude Code, Codex, and Antigravity.
 
 ## Read First
 
 1. `docs/campaign/AGENT_SYNC.md`
 2. `CLAUDE.md`
+
+For deep context (campaign strategy, prior experiments, hardware state):
+
+3. `docs/codex-memory/BOOTSTRAP.md` — full bootstrap reading list
 
 ## Purpose
 
@@ -18,10 +22,20 @@ Start here for both Claude Code and Codex.
 
 `CLAUDE.md` contains the standing coordination rules for sessions, updates, and disagreement handling.
 
+## Tool-Specific Config
+
+| Tool | Config | Skills | Workflows |
+|------|--------|--------|-----------|
+| Claude Code | `~/.claude/settings.json` + `.claude/settings.local.json` | `~/.claude/skills/` | `~/.claude/commands/` |
+| Codex | `~/.codex/config.toml` | `~/.codex/skills/` | N/A |
+| Antigravity | `~/.gemini/antigravity/mcp_config.json` | `.agents/skills/` (project-level) | `.agents/workflows/` |
+
 ## Current Working Mode
 
-- Active goal: commit, push, and launch Session 05c-plus training bundle on `8xH100`
-- Code: `records/track_non_record_16mb/2026-03-30_training_bundle_plus/train_gpt.py` (implemented, validated)
-- Bundle: XSA-all + VE128 + warmdown 3500 + LeakyReLU(0.5)² on Session 03 anchor
-- Next phase: evaluate 05c-plus naive int6 results, then consider GPTQ port if quality improves
-- Out of scope: FA3, TTT, SWA, Session 05b GPTQ debugging
+- Active goal: smoke and run Session 05f (BigramHash 3072x112 + warmdown 4000) on `8xH100`
+- Code: `records/track_non_record_16mb/2026-03-31_05f_refine_bigram3072_warmdown4000/train_gpt.py`
+- Base: 05c-plus (XSA-all + VE128 + warmdown 3500 + LeakyReLU(0.5)²)
+- 05c-plus result: quality-positive (sliding s64 `1.12558`, delta `-0.00347`), throughput regressed (`100.39 ms`, +9ms)
+- GPTQ status: permanently parked
+- Next phase: 1xGPU smoke for 05f, then 8xH100 run if smoke passes
+- Out of scope: FA3, TTT, SWA, GPTQ, Parallel Muon, Parameter Banking, Late QAT, LZMA
