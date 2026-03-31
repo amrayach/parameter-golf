@@ -14,7 +14,7 @@
 - Session 03 pre-TTT anchor work is complete at `val_bpb=1.12904446` (sliding s64) on Pegasus `8xH100`.
 - Session 04 targeted delta sweep is closed.
 - Session 05 initially shifted to **GPTQ correctness first**, but that branch is now parked on the old anchor.
-- Current Session 05 mainline is **05c-plus training quality first**.
+- Current Session 05 mainline is **05c-plus as best measured branch, with throughput-aware follow-up design next**.
 
 ## Session 03 decisions
 
@@ -144,8 +144,30 @@
 
 1. **Quality-positive, throughput regressed.** Sliding s64 val_bpb `1.12557920` vs anchor `1.12904446` (delta `-0.00347`). Pre-quant EMA `1.14186715` and int6 roundtrip `1.14933197` both improved. But `step_avg=100.39ms` exceeds the anchor's `91.37ms` by `+9.02ms`, costing 587 training steps (5977 vs 6564). The quality gain came despite fewer steps, suggesting VE128 + XSA-all + warmdown extension are genuinely better architecturally.
 2. **Not a seed-validation branch yet.** The throughput regression exceeds the `+5ms` gate. The branch is quality-positive but cannot be promoted to seed validation without addressing throughput.
-3. **05f promoted to next smoke candidate.** BigramHash 3072x112 + warmdown 4000 on the 05c-plus base. The quality gain justifies exploring further refinements on this architecture. Code: `records/track_non_record_16mb/2026-03-31_05f_refine_bigram3072_warmdown4000/`.
+3. **05f was promoted as the next smoke candidate, then measured negative.** BigramHash 3072x112 + warmdown 4000 on the 05c-plus base was a reasonable bounded follow-up, but the measured 8xH100 result failed to improve 05c-plus. Code: `records/track_non_record_16mb/2026-03-31_05f_refine_bigram3072_warmdown4000/`.
 4. **Do not reopen GPTQ.** The 05c-plus architecture's positive quality result does not change the GPTQ parking decision — the export-only probe (05e) already tested this exact architecture.
+
+## Session 05f decisions (2026-03-31)
+
+1. **05f is a clean negative follow-up.** BigramHash 3072x112 + warmdown 4000 on the 05c-plus base reached sliding s64 `1.12660664`, which is worse than 05c-plus `1.12557920` by `+0.00102744`. Pre-quant EMA and int6 roundtrip also regressed slightly. Artifact size increased by `41,583` bytes.
+2. **05f did not buy back throughput.** `step_avg=100.51 ms` vs `100.39 ms` on 05c-plus. The change set neither improved quality nor recovered speed.
+3. **05c-plus remains the best measured branch in this family.** Do not spend more 8xH100 time on 05f. The next branch should target the throughput-quality tradeoff directly, especially the cost of XSA-all.
+
+## Session 05g and compression-path decisions (2026-03-31)
+
+1. **05g is a negative follow-up.** Reducing `xsa_last_n` from 11 to 8 recovered only `1.72 ms` and `103` steps, while slightly regressing all quality metrics vs 05c-plus and blowing the old export path over the size cap. Do not spend more 8xH100 time on local XSA / bigram micro-deltas.
+2. **The local 05c-plus search neighborhood is exhausted.** 05e (GPTQ), 05f (bigram/warmdown), and 05g (XSA-8) are three consecutive negatives. Keep 05c-plus as the fallback control branch and shift to one coherent larger fork.
+3. **Custom serialization + brotli is now the leading export candidate.** On saved 05c-plus and 05g artifacts, the best measured path is `custom-shuffle + brotli-10`. The byte-shuffle contribution itself is tiny (`~8-10 KB`), but the overall custom serialization + brotli path materially improves artifact viability and should be treated as the current export-path baseline for future fork planning.
+4. **Do not assume compression alone unlocks a major width jump.** The initial wider-MLP simulation was too crude and has been replaced locally with a corrected estimator. Rerun the corrected compression probe before making any width decision.
+
+## Checkpoint diagnostics decisions (2026-03-31)
+
+1. **Back up the best checkpoint before the next run.** Save `final_model.pt`, `final_model.int6.ptz`, and the training log under `diagnostics/YYYY-MM-DD_<tag>/` so analysis survives future launches.
+2. **Use `diagnose_weights.py` as a lightweight weight-statistics and quantization-damage proxy.** Preferred invocation for future work is:
+   - `python scripts/diagnostics/diagnose_weights.py final_model.pt final_model.int6.ptz`
+   This compares the float checkpoint against the dequantized int6 artifact on the same model.
+3. **Scope of the diagnostic is limited.** It is useful for layer norms, outlier fractions, sparsity, SmearGate / VE / Bigram scale inspection, and per-layer float-vs-int6 damage proxies. It is **not** an activation-level diagnostic and cannot justify claims like “dead neurons” by itself.
+4. **Diagnostic order is now explicit.** Start with single-checkpoint weight statistics, then run float-vs-int6 comparison on the same checkpoint, then correlate those findings with the measured 05c-plus / 05f run logs before choosing the next throughput-aware branch.
 
 ## Hard gates
 

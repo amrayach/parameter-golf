@@ -2,6 +2,21 @@
 
 This directory turns the campaign plan into operator-ready assets for a 7-10 day push on the challenge.
 
+## Current Status
+
+For live execution state, always defer to:
+- `AGENTS.md`
+- `docs/campaign/AGENT_SYNC.md`
+- `CLAUDE.md`
+
+As of 2026-03-31:
+- the active mainline is compression-path feasibility on top of the measured 05c-plus fallback
+- Session 05c-plus is the best measured branch in the current family
+- Session 05f and Session 05g are measured negatives vs 05c-plus
+- GPTQ is permanently parked for this model family after the 05e export-only probe on the 05c-plus architecture
+- the next live execution step is rerunning the corrected compression probe on the saved 05c-plus / 05g artifacts
+- for exact smoke-vs-launch gating, use `docs/campaign/AGENT_SYNC.md` rather than this summary
+
 ## Objective
 
 Primary goal:
@@ -12,10 +27,10 @@ Secondary goal:
 
 ## Current read of the field
 
-As of 2026-03-27, the public leaderboard pattern is clear:
+As of 2026-03-30, the public leaderboard pattern is clear:
 - The biggest gains came from stacking practical wins, not from speculative new theory.
 - The strongest recurring levers are sliding-window eval, compression-aware training and export, deeper and wider models funded by compression, cheap architectural tweaks, and later TTT.
-- The current best public score is the TTT stack in `@records/track_10min_16mb/2026-03-23_LeakyReLU_LegalTTT_ParallelMuon/README.md`.
+- The current official merged #1 is PR `#1019` at `1.1147` BPB.
 
 Implication:
 - The fastest serious route is a strong non-TTT anchor first.
@@ -35,6 +50,8 @@ Important references:
 - `@docs/dfki-nlp-pegasus-bridle-8a5edab282632443.txt`
 
 ## Session order
+
+These session docs are historical planning assets. They are useful for lineage and rationale, but they are not the current execution source of truth. Use `AGENT_SYNC.md` for the live plan.
 
 1. `sessions/01_lineage_and_environment_audit.md`
 Preferred mode: Planning

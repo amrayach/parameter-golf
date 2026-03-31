@@ -32,11 +32,13 @@ For deep context (campaign strategy, prior experiments, hardware state):
 
 ## Current Working Mode
 
-- Active goal: run Session 05g (XSA-8 throughput recovery) and compare against 05c-plus
+- Active goal: finish compression-path feasibility on the saved 05c-plus / 05g artifacts, then decide whether to open one coherent larger fork
 - Best measured branch: `records/track_non_record_16mb/2026-03-30_training_bundle_plus/train_gpt.py` (05c-plus)
-- Active candidate: `records/track_non_record_16mb/2026-03-31_05g_xsa8_throughput/train_gpt.py`
+- Current probe utility: `scripts/diagnostics/compress_probe.py`
+- Current checkpoint utility: `scripts/diagnostics/diagnose_weights.py`
 - 05c-plus result: quality-positive (sliding s64 `1.12558`, delta `-0.00347`), throughput regressed (`100.39 ms`, +9ms)
 - 05f result: negative vs 05c-plus (sliding s64 `1.12661`, delta `+0.00103`)
-- 05g change: `xsa_last_n` 11 → 8 on 05c-plus base
+- 05g result: negative vs 05c-plus despite modest throughput recovery; over cap on the old export path
+- Local XSA / bigram micro-deltas are exhausted on this family
 - GPTQ status: permanently parked
-- Out of scope: FA3, TTT, SWA, GPTQ, Parallel Muon, Parameter Banking, Late QAT, LZMA
+- Out of scope: FA3, TTT, SWA, GPTQ, local XSA/bigram micro-deltas, Parallel Muon, Parameter Banking, Late QAT, LZMA

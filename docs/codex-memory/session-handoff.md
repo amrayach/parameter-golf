@@ -1,6 +1,6 @@
 # Session Handoff
 
-Date: 2026-03-30
+Date: 2026-03-31
 
 ## Current Truths
 
@@ -14,34 +14,81 @@ Date: 2026-03-30
 - Current official merged #1 is PR `#1019` at `1.1147` BPB (3-seed mean `1.88218` nats).
 - NGC 26.03 container + fscratch is the confirmed stable Pegasus path.
 - Three agents coordinate on this repo: Claude Code, Codex, and Antigravity.
+- `docs/campaign/AGENT_SYNC.md` is the live source of truth if any summary file disagrees.
 
 ## What Matters Now
 
-- **Session 05c-plus** is the active objective: a training-quality bundle on the Session 03 anchor.
-- Code is implemented and pushed: `records/track_non_record_16mb/2026-03-30_training_bundle_plus/train_gpt.py`
-- Smoke test script is ready: `records/track_non_record_16mb/2026-03-30_training_bundle_plus/smoke_test.sh`
-- Next step: run 1xGPU Pegasus smoke, then 8xH100 full run (Pegasus or RunPod $25 credits).
-- Do not work on GPTQ, FA3, TTT, or SWA until 05c-plus training results are measured.
+- **Session 05c-plus** is now the best measured branch, not the next run target.
+- Best measured code: `records/track_non_record_16mb/2026-03-30_training_bundle_plus/train_gpt.py`
+- Session 05f follow-up is measured negative: `records/track_non_record_16mb/2026-03-31_05f_refine_bigram3072_warmdown4000/train_gpt.py`
+- Session 05g follow-up is measured negative: `records/track_non_record_16mb/2026-03-31_05g_xsa8_throughput/train_gpt.py`
+- GPTQ is permanently parked for this model family after Session 05e on the 05c-plus architecture.
+- Smoke harnesses exist:
+  - `records/track_non_record_16mb/2026-03-30_training_bundle_plus/cpu_smoke.sh`
+  - `records/track_non_record_16mb/2026-03-30_training_bundle_plus/smoke_test.sh`
+- Current next step: finish compression-path feasibility, then choose one coherent larger fork.
+- Do not work on GPTQ, FA3, TTT, or more local XSA/bigram micro-deltas.
 
-## 05c-plus Bundle
+## 05c-plus / 05f status
 
-Four changes on Session 03 anchor:
-1. XSA 4 → 11 (all layers)
-2. VE128 on layers 9-10 (shared ValueEmbedding)
-3. Warmdown 3000 → 3500
-4. LeakyReLU(0.5)² replacing ReLU²
+05c-plus measured on `8xH100`:
+- sliding s64 `1.12557920`
+- pre-quant EMA `1.14186715`
+- int6 roundtrip `1.14933197`
+- `step_avg=100.39 ms`
+- quality-positive, throughput-regressed
 
-Not included: SWA (dead code in PR #1019 and #634), GPTQ (parked), FA3 (ABI issue).
+05f measured on `8xH100`:
+- sliding s64 `1.12660664`
+- pre-quant EMA `1.14190308`
+- int6 roundtrip `1.15026661`
+- `step_avg=100.51 ms`
+- negative vs 05c-plus, no throughput recovery
 
-Target: sliding s64 val_bpb < 1.126 (anchor 1.129).
+05g measured on `8xH100`:
+- sliding s64 `1.12584234`
+- pre-quant EMA `1.14203044`
+- int6 roundtrip `1.14963535`
+- `step_avg=98.67 ms`
+- slight speed recovery, slight quality loss, and over cap on the old export path
+
+Conclusion:
+- keep 05c-plus as the best measured branch
+- do not continue the 05f / 05g local tweak line
+
+## Current Diagnostic Approaches
+
+Artifacts:
+- `diagnostics/2026-03-31_05c_plus/final_model.pt`
+- `diagnostics/2026-03-31_05c_plus/final_model.int6.ptz`
+- `diagnostics/2026-03-31_05c_plus/train.log`
+- `diagnostics/2026-03-31_05c_plus/diagnostics_float.txt`
+- `diagnostics/2026-03-31_05c_plus/diagnostics_int6.txt`
+
+Commands:
+- `python scripts/diagnostics/diagnose_weights.py final_model.pt`
+- `python scripts/diagnostics/diagnose_weights.py final_model.pt final_model.int6.ptz`
+- `python scripts/diagnostics/compress_probe.py diagnostics/2026-03-31_05c_plus/final_model.int6.ptz`
+
+Use:
+- single-checkpoint weight statistics
+- float-vs-int6 quantization-damage proxy on the same checkpoint
+- compression-path feasibility on saved artifacts
+- correlation with measured 05c-plus / 05f / 05g logs before selecting the next branch
+
+Limit:
+- checkpoint-weight diagnostic only, not activation-level evidence
 
 ## Parked Work
 
-### GPTQ (Session 05b) — parked after 7 ablations
+### GPTQ (Session 05b + 05e) — permanently parked
 
-Seven ablations on the same Session 03 checkpoint all failed. Ablation #6 (PR #1019 verbatim transplant) produced byte-identical MSE to the local code, proving the GPTQ code is correct. The failure is model-specific: relu creates sparse Hessians, leaky_relu does not. GPTQ may become viable after 05c-plus trains with LeakyReLU².
+Session 05b produced seven failed ablations on the Session 03 checkpoint. Ablation #6 (PR #1019 verbatim transplant) produced byte-identical MSE to the local code, proving the GPTQ code is correct. Session 05e then tested the leading rescue hypothesis directly on the 05c-plus architecture and falsified it:
+- same-checkpoint naive replay: `3.96902897`
+- same-checkpoint GPTQ replay: `3.96902897`
+- `worse_than_naive_rowmax = 44/66`
 
-GPTQ replay on a 05c-plus checkpoint requires a merge step: the parked 05b script has the old architecture (no VE, relu²).
+Conclusion: GPTQ is permanently parked for this model family. Do not schedule more GPTQ work on the current branch.
 
 ### FA3 — parked (ABI issue)
 
@@ -59,4 +106,6 @@ Parked pending stronger pre-TTT base.
 - `docs/codex-memory/decisions.md` — locked decisions
 - `docs/codex-memory/project-state.md` — project state
 - `docs/codex-memory/next-session.md` — next actions
+- `scripts/diagnostics/diagnose_weights.py` — checkpoint diagnostics
+- `scripts/diagnostics/compress_probe.py` — export-path feasibility probe
 - `docs/superpowers/plans/2026-03-30-session-05c-plus.md` — 05c-plus plan

@@ -9,3 +9,11 @@ data/docs_selected.jsonl
 .mypy_cache/
 .venv
 logs/
+diagnostics/*/
+!diagnostics/README.md
+# Agent tooling (Antigravity, Claude Code, Codex)
+.agents/skills/
+.agents/workflows/
+.serena/
+*.pyc
+SESSION.md

@@ -5,8 +5,8 @@ Date: 2026-03-31
 ## Objective
 
 Primary:
-- smoke and run Session 05f (BigramHash 3072x112 + warmdown 4000) on `8xH100`
-- base: 05c-plus, which measured quality-positive (sliding s64 `1.12558`, delta `-0.00347`) but throughput-regressed (`100.39 ms`)
+- keep Session 05c-plus as the current best measured branch
+- finish compression-path feasibility and decide whether the next larger fork should spend bytes on modest width or pivot to a different thesis
 
 Secondary:
 - keep the Session 03 anchor as the fixed reference
@@ -14,6 +14,9 @@ Secondary:
 
 Completed:
 - Session 05e GPTQ probe: **negative result** (44/66 layers worse than naive). GPTQ permanently parked.
+- Session 05f follow-up: **negative result** vs 05c-plus (`1.12660664` vs `1.12557920`)
+- Session 05g follow-up: **negative result** vs 05c-plus (`1.12584234` vs `1.12557920`), with modest speed recovery but cap failure on the old export path
+- Initial compression-path probe: custom serialization + brotli-10 materially outperforms the current `torch.save + zstd` path on both 05c-plus and 05g
 
 ## Current campaign state
 
@@ -27,6 +30,7 @@ Completed:
 - Session 05b GPTQ implementation exists but is parked on the current anchor after 7 conclusive ablations
 - Session 05c-plus code and smoke harness are implemented and pushed
 - Session 05e same-checkpoint export-only replay completed and closed the GPTQ question for this model family
+- Offline analysis utilities now live under `scripts/diagnostics/`
 
 ## Verified hardware state
 
@@ -63,6 +67,20 @@ Completed:
   - int6 roundtrip val_bpb: `1.14933197`
   - steps: `5977`, step_avg: `100.39 ms` (+9.02ms vs anchor)
   - artifact: `15589271` bytes
+  - GPU: `8xH100`, NGC 26.03 container
+- `8xH100` Session 05f (negative vs 05c-plus):
+  - sliding s64 val_bpb: `1.12660664` (05c-plus delta: **+0.00103**)
+  - pre-quant EMA val_bpb: `1.14190308`
+  - int6 roundtrip val_bpb: `1.15026661`
+  - steps: `5977`, step_avg: `100.51 ms` (+0.12ms vs 05c-plus)
+  - artifact: `15630854` bytes (+41,583 bytes vs 05c-plus)
+  - GPU: `8xH100`, NGC 26.03 container
+- `8xH100` Session 05g (negative vs 05c-plus):
+  - sliding s64 val_bpb: `1.12584234` (05c-plus delta: **+0.00026**)
+  - pre-quant EMA val_bpb: `1.14203044`
+  - int6 roundtrip val_bpb: `1.14963535`
+  - steps: `6080`, step_avg: `98.67 ms` (-1.72ms vs 05c-plus)
+  - artifact: `16475467` bytes (+886,196 bytes vs 05c-plus, over cap on old export path)
   - GPU: `8xH100`, NGC 26.03 container
 
 ## Launcher lesson
@@ -101,6 +119,18 @@ Do not use:
   - naive roundtrip exact `3.96902897`
   - GPTQ roundtrip exact `3.96902897`
   - `worse_than_naive_rowmax = 44/66`
+- The checkpoint-diagnostics workflow is now operational on the best measured branch:
+  - backed up `final_model.pt`, `final_model.int6.ptz`, and `train.log` under `diagnostics/2026-03-31_05c_plus/`
+  - pulled `diagnostics_float.txt` and `diagnostics_int6.txt` locally
+  - `scripts/diagnostics/diagnose_weights.py` now supports either:
+    - a single-model weight statistics report, or
+    - float-vs-int6 comparison mode on the same checkpoint
+- The compression-path feasibility workflow is operational:
+  - `scripts/diagnostics/compress_probe.py` tested 13 compression strategies on saved artifacts
+  - best measured path on both 05c-plus and 05g is `custom-shuffle + brotli-10`
+  - on 05c-plus it saved `149,991` bytes vs the current export baseline
+  - on 05g it saved `1,032,921` bytes and brought the branch back under the cap
+  - byte-shuffle itself contributes only `~8-10 KB`; custom serialization + brotli is the real win
 
 ## Session 05b: Full Hessian GPTQ (2026-03-29)
 
@@ -142,13 +172,19 @@ Do not use:
 - no vendor-tuned NGC FA3 runtime result yet
 - no top-tier leaderboard-adjacent result yet
 - no seed-validation run yet for 05c-plus (throughput regression makes it premature)
-- no 05f (bigram3072 + warmdown4000) smoke or run yet
+- no committed compression-path upgrade yet
+- no corrected width-feasibility rerun yet after the initial probe
 
 ## Best next move
 
-- **Smoke 05f on 1xGPU, then launch on 8xH100 if smoke passes**
-- Code: `records/track_non_record_16mb/2026-03-31_05f_refine_bigram3072_warmdown4000/train_gpt.py`
-- Base: 05c-plus (XSA-all + VE128 + warmdown 3500 + LeakyReLU(0.5)²)
-- Additional changes: BigramHash 2048→3072, dim 128→112, warmdown 3500→4000
-- 05c-plus measured quality-positive (sliding s64: 1.12558, delta -0.00347 vs anchor) but throughput regressed (+9ms)
-- SWA excluded (dead code), GPTQ excluded (permanently parked)
+- **Rerun the corrected compression probe, then choose one coherent larger fork**
+- Keep 05c-plus as the best measured branch for now
+- 05f and 05g are clean negatives and should not receive more 8xH100 time
+- Preferred diagnostic approaches going forward:
+  - `python scripts/diagnostics/diagnose_weights.py final_model.pt` for single-checkpoint weight stats
+  - `python scripts/diagnostics/diagnose_weights.py final_model.pt final_model.int6.ptz` for float-vs-int6 comparison
+  - `python scripts/diagnostics/compress_probe.py diagnostics/2026-03-31_05c_plus/final_model.int6.ptz` for export-path feasibility
+  - correlate those reports with the measured 05c-plus / 05f / 05g logs before proposing the next branch
+- Use the corrected compression probe to decide whether the next big fork is:
+  - compression-path upgrade + modest width, or
+  - a different larger fork that does not depend on width unlock

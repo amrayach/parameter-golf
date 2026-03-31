@@ -4,13 +4,11 @@ Date: 2026-03-31
 
 ## Current Objective
 
-Session 05g (XSA-8 throughput recovery) is the active next candidate. 05c-plus remains the best measured branch.
+**Compression-path upgrade** is the active next move. 05c-plus remains the best measured branch.
 
-Session 05c-plus is **measured and quality-positive** (sliding s64 `1.12558`, delta `-0.00347` vs anchor) but throughput regressed (`100.39 ms`, +9ms).
-Session 05f is **measured and worse than 05c-plus** (`1.12661`, delta `+0.00103` vs 05c-plus) with no throughput recovery.
-Session 05g reduces `xsa_last_n` from 11 to 8 on the 05c-plus base to test whether partial XSA scope reduction recovers throughput while retaining quality.
+The local search around 05c-plus is **exhausted**: three consecutive negative branches (05e GPTQ, 05f bigram/warmdown, 05g XSA-8) confirm the local optimum. The strategy shifts from micro-deltas to a larger coherent fork gated by compression feasibility.
 
-GPTQ is **permanently parked** — failed on both relu² anchor (7 ablations) and leaky_relu² 05c-plus (05e probe: 44/66 layers worse than naive).
+GPTQ is **permanently parked** — failed on both relu² anchor (7 ablations) and leaky_relu² 05c-plus (05e probe: 44/66 layers worse than naive). May be re-evaluated on a substantially different future fork.
 
 ## Challenge Reality
 
@@ -84,20 +82,78 @@ Diagnostic conclusions (from 05c-plus and 05f checkpoint analysis):
 - Bigram is not the next lever
 - XSA scope is the first knob to relax for throughput recovery
 
-### Phase 5: Session 05g — XSA-8 throughput recovery (NEXT)
+### Phase 5: Session 05g — XSA-8 throughput recovery (MEASURED — NEGATIVE)
 
 Code: `records/track_non_record_16mb/2026-03-31_05g_xsa8_throughput/train_gpt.py`
 
 Single change on the 05c-plus base:
 - `xsa_last_n` 11 → 8 (XSA on layers 3-10, removed from layers 0-2)
 
-Hypothesis: XSA scope increase (4→11) is the leading contributor to the +9ms throughput regression. Reducing to 8 should partially recover throughput while retaining most of the quality gain.
+#### 8xH100 measured result (2026-03-31)
+
+| Metric | 05g | 05c-plus | Delta vs 05c-plus |
+|--------|-----|----------|-------------------|
+| sliding s64 val_bpb | **1.12584234** | 1.12557920 | **+0.00026** |
+| pre_quant EMA exact | 1.14203044 | 1.14186715 | +0.00016 |
+| int6 roundtrip exact | 1.14963535 | 1.14933197 | +0.00030 |
+| step_avg_ms | **98.67** | 100.39 | **-1.72** |
+| steps | 6080 | 5977 | +103 |
+| bytes_total | **16,475,467** | 15,589,271 | **+886,196** |
+| cap status | **+475,467 OVER** | -410,729 under | — |
+
+**Assessment**: Negative. Small throughput gain (-1.72ms) but quality regressed (+0.00026 BPB), artifact blew the 16MB cap by 475KB, and is not a valid submission. The critical lesson: compression entropy is fragile enough that small training changes can blow the cap even without parameter count changes.
+
+### Phase 6: Compression-path upgrade — brotli + byte-shuffle (IN PROGRESS)
+
+Probe script: `scripts/diagnostics/compress_probe.py`
+
+**Thesis**: Compression headroom can buy meaningful quality through MLP width expansion.
+
+#### Initial measured probe results (2026-03-31)
+
+Best measured export candidate on both saved artifacts:
+- `custom-shuffle + brotli-10`
+
+05c-plus initial probe:
+- baseline total with code: `15,596,605`
+- best total with code: `15,446,614`
+- gain vs baseline: `149,991` bytes
+- headroom under cap: `+553,386`
+
+05g initial probe:
+- baseline total with code: `16,475,486` (over cap)
+- best total with code: `15,442,565`
+- gain vs baseline: `1,032,921` bytes
+- headroom under cap: `+557,435`
+
+Key finding:
+- byte-shuffle contributes only `~8-10 KB`; most of the gain comes from custom serialization + brotli
+- the old wider-MLP simulation was too crude; a corrected estimator is now the gate before any width decision
+
+**Gate**: Run the corrected `scripts/diagnostics/compress_probe.py` on 05c-plus and 05g artifacts on Pegasus. Measure:
+1. Brotli + byte-shuffle compressed size vs current zstd
+2. Full roundtrip correctness
+3. Corrected wider-MLP headroom estimate
+
+**If gate passes** (real headroom demonstrated): Open one big coherent fork:
+- Keep 05c-plus training recipe mostly intact
+- Swap compression path (brotli + byte-shuffle + custom serialization)
+- Widen MLP only as far as the corrected probe supports
+
+**If gate fails**: Reassess before adding more training complexity.
+
+**Not bundled in this fork** (deferred to Phase C if needed):
+- Turbo-Muon optimizer
+- EngramLite (bigram+trigram hash)
+- Late QAT
 
 Next steps:
-1. Sync to Pegasus: `git pull` on `/netscratch/$USER/parameter-golf`
-2. Run 1xGPU smoke (see README in 05g folder)
-3. If smoke passes, run 8xH100 full (see README in 05g folder)
-4. Compare vs 05c-plus on sliding s64, step_avg_ms, and artifact size
+1. Commit/push the repo hygiene pass so `scripts/diagnostics/` is available on Pegasus
+2. On Pegasus: rerun the corrected probe on the saved 05c-plus artifact
+3. Also rerun on the saved 05g artifact for comparison
+4. Decide whether the next big fork is:
+   - compression-path upgrade + modest width, or
+   - a different larger fork that does not assume width unlock
 
 ### Phase 2: GPTQ probe on 05c-plus architecture (DONE — NEGATIVE)
 
@@ -164,7 +220,8 @@ GPTQ is now parked permanently for this model family. The activation function is
 - Shared mutable state: `docs/campaign/AGENT_SYNC.md`
 - Append-only measured results: `docs/campaign/results_log.jsonl`
 - Stable rules: `CLAUDE.md`
-- Checkpoint diagnostic utility: `diagnose_weights.py`
+- Checkpoint diagnostic utility: `scripts/diagnostics/diagnose_weights.py`
+- Compression feasibility probe: `scripts/diagnostics/compress_probe.py`
 - 05c-plus plan: `docs/superpowers/plans/2026-03-30-session-05c-plus.md`
 - 05c-plus code: `records/track_non_record_16mb/2026-03-30_training_bundle_plus/train_gpt.py`
 - 05f follow-up: `records/track_non_record_16mb/2026-03-31_05f_refine_bigram3072_warmdown4000/`

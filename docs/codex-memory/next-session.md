@@ -2,17 +2,19 @@
 
 ## Phase
 
-**Session 05g is the active next candidate. 05c-plus remains the best measured branch.**
+**Compression-path feasibility is active. 05c-plus remains the best measured branch.**
 
-GPTQ is permanently parked. Focus on naive int6 export only.
+GPTQ is permanently parked. 05f and 05g are closed negatives.
 
 ## Immediate next action
 
-1. Sync 05g to Pegasus: `git pull` on `/netscratch/$USER/parameter-golf`
-2. Run 1xGPU smoke (see `records/track_non_record_16mb/2026-03-31_05g_xsa8_throughput/README.md`)
-3. If smoke passes, run 8xH100 full
-4. Compare vs 05c-plus: sliding s64 val_bpb, step_avg_ms, artifact size
-5. If 05g recovers throughput while keeping quality, it becomes the new best branch
+1. Commit/push the repo hygiene pass so `scripts/diagnostics/` is available on Pegasus.
+2. Rerun the corrected compression probe on the saved 05c-plus artifact.
+3. Rerun the corrected compression probe on the saved 05g artifact for comparison.
+4. Decide whether the next larger fork is:
+   - compression-path upgrade + modest width, or
+   - a different larger fork that does not assume width unlock.
+5. Keep 05c-plus as the fallback control branch until a larger fork beats it.
 
 ## What happened in Session 05c-plus / 05f (MEASURED)
 
@@ -33,7 +35,14 @@ Quality-positive but throughput regressed materially. Not a seed-validation bran
 - step_avg: `100.51 ms` (no throughput recovery)
 - artifact: `15,630,854` bytes (+41,583 vs 05c-plus)
 
-Conclusion: 05f is negative. Do not continue that line.
+05g 8xH100 follow-up:
+- sliding s64 val_bpb: `1.12584234` (**worse** than 05c-plus by `+0.00026`)
+- pre_quant EMA: `1.14203044`
+- int6 roundtrip: `1.14963535`
+- step_avg: `98.67 ms` (modest recovery)
+- artifact: `16,475,467` bytes (**over the cap** on the old export path)
+
+Conclusion: 05f and 05g are both negative follow-ups. Do not continue the local tweak line.
 
 ## Current diagnostic workflow
 
@@ -45,14 +54,17 @@ Artifacts:
 - `diagnostics/2026-03-31_05c_plus/diagnostics_int6.txt`
 
 Utility:
-- `diagnose_weights.py`
+- `scripts/diagnostics/diagnose_weights.py`
+- `scripts/diagnostics/compress_probe.py`
 
 Approaches:
 - single-checkpoint weight statistics:
-  - `python diagnose_weights.py final_model.pt`
+  - `python scripts/diagnostics/diagnose_weights.py final_model.pt`
 - float-vs-int6 comparison on the same checkpoint:
-  - `python diagnose_weights.py final_model.pt final_model.int6.ptz`
-- interpret both reports together with the measured 05c-plus / 05f logs before choosing the next branch
+  - `python scripts/diagnostics/diagnose_weights.py final_model.pt final_model.int6.ptz`
+- export-path feasibility:
+  - `python scripts/diagnostics/compress_probe.py diagnostics/2026-03-31_05c_plus/final_model.int6.ptz`
+- interpret these reports together with the measured 05c-plus / 05f / 05g logs before choosing the next larger fork
 
 Scope:
 - useful for weight norms, outliers, sparsity, SmearGate / VE / Bigram scale inspection, and float-vs-int6 damage proxies
@@ -62,5 +74,6 @@ Scope:
 
 1. `docs/campaign/AGENT_SYNC.md`
 2. `CLAUDE.md`
-3. `records/track_non_record_16mb/2026-03-31_05g_xsa8_throughput/README.md`
-4. `records/track_non_record_16mb/2026-03-31_05g_xsa8_throughput/train_gpt.py` (diff vs 05c-plus: xsa_last_n 11→8 only)
+3. `scripts/diagnostics/compress_probe.py`
+4. `diagnostics/README.md`
+5. `records/track_non_record_16mb/2026-03-30_training_bundle_plus/train_gpt.py`

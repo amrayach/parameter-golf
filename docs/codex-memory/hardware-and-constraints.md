@@ -45,13 +45,19 @@
 
 ## Current phase
 
-- **Session 05c-plus is the active objective** — training-quality bundle on Session 03 anchor
+- **Session 05c-plus is the current best measured branch**
+- Session 05f and Session 05g are measured negatives vs 05c-plus
 - Infrastructure uncertainty is no longer the blocker
-- Quality-first improvements matter more than throughput-first chasing
+- Current blocker is compression-path feasibility for the next larger fork
 - GPTQ is parked (7 ablations, code correct, failure model-specific)
 - FA3 is parked (ABI issue with NGC container)
 - SWA is excluded (dead code in reference PRs)
-- RunPod $25 credits reserved for one decisive 8xH100 run after Pegasus smoke passes
+- Checkpoint diagnostics are now part of the mainline workflow:
+  - `python scripts/diagnostics/diagnose_weights.py final_model.pt`
+  - `python scripts/diagnostics/diagnose_weights.py final_model.pt final_model.int6.ptz`
+- Compression feasibility is now part of the mainline workflow:
+  - `python scripts/diagnostics/compress_probe.py diagnostics/2026-03-31_05c_plus/final_model.int6.ptz`
+- RunPod $25 credits reserved for one decisive 8xH100 run after Pegasus diagnostics and branch selection are settled
 
 ## Practical rules
 
@@ -59,6 +65,9 @@
 - The saved-container FA3 runtime is a measured negative result; do not rerun as a throughput candidate
 - Future FA3 work requires a vendor-tuned NGC runtime, not the current pip-replaced stack
 - GPTQ-lite clip search confirmed as NOT helpful
+- Current measured export candidate:
+  - `custom-shuffle + brotli-10` on saved 05c-plus / 05g artifacts
+  - byte-shuffle contributes only `~8-10 KB`; custom serialization + brotli is the dominant gain
 - Attention microbenchmark (kernel-only, not full training throughput):
   - `26.03` SDPA flash: `1.967 ms/iter`
   - `25.02` SDPA flash: `1.889 ms/iter`
