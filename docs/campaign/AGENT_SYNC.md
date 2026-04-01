@@ -1,6 +1,6 @@
 # Agent Sync
 
-Date: 2026-03-31
+Date: 2026-04-01
 
 ## Current Objective
 
@@ -103,57 +103,73 @@ Single change on the 05c-plus base:
 
 **Assessment**: Negative. Small throughput gain (-1.72ms) but quality regressed (+0.00026 BPB), artifact blew the 16MB cap by 475KB, and is not a valid submission. The critical lesson: compression entropy is fragile enough that small training changes can blow the cap even without parameter count changes.
 
-### Phase 6: Compression-path upgrade — brotli + byte-shuffle (IN PROGRESS)
+### Phase 6: Compression-path upgrade — brotli + byte-shuffle (GATE RESULT: PARTIAL)
 
-Probe script: `scripts/diagnostics/compress_probe.py`
+Probe script: `compress_probe.py`
 
-**Thesis**: Compression headroom can buy meaningful quality through MLP width expansion.
+**Original thesis**: Compression headroom can buy meaningful quality through MLP width expansion.
+**Measured result**: Brotli helps, but **width is capped at ~3.15x under uniform int6**. The bottleneck is bit-width, not the compressor.
 
-#### Initial measured probe results (2026-03-31)
+#### Measured probe results (2026-03-31)
 
 Best measured export candidate on both saved artifacts:
 - `custom-shuffle + brotli-10`
 
-05c-plus initial probe:
+05c-plus probe:
 - baseline total with code: `15,596,605`
 - best total with code: `15,446,614`
-- gain vs baseline: `149,991` bytes
+- gain vs baseline: `149,991` bytes (1.0%)
 - headroom under cap: `+553,386`
 
-05g initial probe:
+05g probe:
 - baseline total with code: `16,475,486` (over cap)
 - best total with code: `15,442,565`
-- gain vs baseline: `1,032,921` bytes
+- gain vs baseline: `1,032,921` bytes (6.3%)
 - headroom under cap: `+557,435`
 
-Key finding:
-- byte-shuffle contributes only `~8-10 KB`; most of the gain comes from custom serialization + brotli
-- the old wider-MLP simulation was too crude; a corrected estimator is now the gate before any width decision
+#### Corrected width estimates (model_dim=512, mlp_mult=3.0, 11 layers)
 
-**Gate**: Run the corrected `scripts/diagnostics/compress_probe.py` on 05c-plus and 05g artifacts on Pegasus. Measure:
-1. Brotli + byte-shuffle compressed size vs current zstd
-2. Full roundtrip correctness
-3. Corrected wider-MLP headroom estimate
+| MLP mult | hidden | headroom | status |
+|----------|--------|----------|--------|
+| 3.10x | 1587 | +228 KB | FITS (safe) |
+| 3.15x | 1612 | +69 KB | FITS (tight) |
+| 3.20x | 1638 | -97 KB | OVER |
+| 3.50x | 1792 | -1.08 MB | OVER |
 
-**If gate passes** (real headroom demonstrated): Open one big coherent fork:
-- Keep 05c-plus training recipe mostly intact
-- Swap compression path (brotli + byte-shuffle + custom serialization)
-- Widen MLP only as far as the corrected probe supports
+Key findings:
+- byte-shuffle contributes only `~8-10 KB`; custom serialization + brotli is the real win
+- uniform int6 is the binding constraint on width, not the compressor
+- PR #1089 achieves 3.5x MLP via mixed-precision GPTQ (int5/6/7), not via brotli alone
+- mixed-precision *naive* quantization (int5 for safe layers) is the actual lever and does NOT require GPTQ
 
-**If gate fails**: Reassess before adding more training complexity.
+### Phase 7: Int5 tolerance probe (CONFIRMED — 924 KB real savings)
 
-**Not bundled in this fork** (deferred to Phase C if needed):
+Mixed int5/int6 on 05c-plus float checkpoint confirmed:
+- Baseline (custom-shuffle + brotli-10): 15,377,614 bytes
+- Conservative schedule (9 tensors): 14,453,220 bytes
+- Real savings: 924,394 bytes
+- This unlocks MLP 3.25x (hidden=1664) within the 16MB cap.
+
+### Phase 8: Session 06a — width fork (IMPLEMENTATION READY, GATE PENDING)
+
+Code: `records/track_non_record_16mb/2026-04-01_06a_width325_mixed_int5_coprime_lateqat/train_gpt.py`
+
+Five deltas on 05c-plus base:
+1. `mlp_mult` 3.0 → 3.25 (hidden 1536 → 1664)
+2. Mixed int5/int6 + custom-shuffle + brotli-10 export
+3. Coprime distributed data loader (env: `LOADER_MODE=coprime`)
+4. Late QAT via STE fake-quant (env: `LATE_QAT_THRESHOLD=0.15`)
+5. Anchor/experiment string update
+
+**Gate**: Run `scripts/diagnostics/export_bpb_ab.py` on 05c-plus float checkpoint first.
+Gate criteria: `delta_sw < 0.002 BPB AND total_bytes(B) < 16,000,000`
+
+**INT5_TENSOR_NAMES**: Placeholder names from probe design. **VERIFY against actual probe JSON before training.**
+
+**Not bundled** (06b scope):
+- Parameter banking + Parallel Muon
 - Turbo-Muon optimizer
 - EngramLite (bigram+trigram hash)
-- Late QAT
-
-Next steps:
-1. Commit/push the repo hygiene pass so `scripts/diagnostics/` is available on Pegasus
-2. On Pegasus: rerun the corrected probe on the saved 05c-plus artifact
-3. Also rerun on the saved 05g artifact for comparison
-4. Decide whether the next big fork is:
-   - compression-path upgrade + modest width, or
-   - a different larger fork that does not assume width unlock
 
 ### Phase 2: GPTQ probe on 05c-plus architecture (DONE — NEGATIVE)
 
