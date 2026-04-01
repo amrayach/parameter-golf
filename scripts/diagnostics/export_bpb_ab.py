@@ -196,6 +196,7 @@ def run_export_path(
     has_leading_space_lut: torch.Tensor,
     is_boundary_token_lut: torch.Tensor,
     code_bytes: int,
+    sw_stride: int = 64,
 ) -> dict:
     print(f"\n{'='*60}")
     print(f"PATH {label}")
@@ -238,16 +239,16 @@ def run_export_path(
     rt_ms = 1000 * (time.perf_counter() - t0)
     print(f"  Roundtrip eval:  loss={rt_loss:.8f}  bpb={rt_bpb:.8f}  ({rt_ms:.0f}ms)")
 
-    # Sliding window s64 eval (the submission metric)
+    # Sliding window eval (stride configurable; s64 is the submission metric)
     t0 = time.perf_counter()
     sw_loss, sw_bpb = eval_val_sliding(
         dummy_args, eval_model, 0, 1, device,
         val_tokens, base_bytes_lut, has_leading_space_lut, is_boundary_token_lut,
-        stride=64,
+        stride=sw_stride,
         eval_seq_len=2048,
     )
     sw_ms = 1000 * (time.perf_counter() - t0)
-    print(f"  Sliding s64:     loss={sw_loss:.8f}  bpb={sw_bpb:.8f}  ({sw_ms:.0f}ms)")
+    print(f"  Sliding s{sw_stride}:     loss={sw_loss:.8f}  bpb={sw_bpb:.8f}  ({sw_ms:.0f}ms)")
 
     return {
         "label": label,
@@ -277,6 +278,8 @@ def main() -> None:
                         help="Directory to write results JSON")
     parser.add_argument("--code-bytes", type=int, default=69_000,
                         help="Estimated code bytes for total artifact size (default: 69000)")
+    parser.add_argument("--sw-stride", type=int, default=64,
+                        help="Sliding window stride (default: 64 = submission metric; use 512 for fast gate)")
     args_cli = parser.parse_args()
 
     output_dir = Path(args_cli.output_dir)
@@ -380,13 +383,13 @@ def main() -> None:
         "A (uniform int6 + brotli-10)",
         sd_cpu, quant_a, hparams, device,
         val_tokens, base_bytes_lut, has_leading_space_lut, is_boundary_token_lut,
-        code_bytes,
+        code_bytes, sw_stride=args_cli.sw_stride,
     )
     result_b = run_export_path(
         "B (conservative int5/int6 + brotli-10)",
         sd_cpu, quant_b, hparams, device,
         val_tokens, base_bytes_lut, has_leading_space_lut, is_boundary_token_lut,
-        code_bytes,
+        code_bytes, sw_stride=args_cli.sw_stride,
     )
 
     # ---- Decision summary ----
