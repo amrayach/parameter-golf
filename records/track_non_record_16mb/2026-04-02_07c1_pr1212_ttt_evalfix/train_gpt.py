@@ -12,11 +12,8 @@ import time
 import uuid
 import zlib
 from pathlib import Path
-try:
-    import brotli
-    _COMPRESSOR = "brotli"
-except ImportError:
-    _COMPRESSOR = "lzma"
+import brotli  # hard requirement -- lzma fallback caused cross-rank decompress failures
+_COMPRESSOR = "brotli"
 import numpy as np
 import sentencepiece as spm
 import torch
@@ -2735,10 +2732,7 @@ def main() -> None:
     torch.save({"w": quant_result, "m": quant_meta}, quant_buf)
     quant_raw = quant_buf.getvalue()
     quant_raw = _byte_shuffle(quant_raw)
-    if _COMPRESSOR == "brotli":
-        quant_blob = brotli.compress(quant_raw, quality=11)
-    else:
-        quant_blob = lzma.compress(quant_raw, preset=6)
+    quant_blob = brotli.compress(quant_raw, quality=11)
     if master_process:
         with open("final_model.int6.ptz", "wb") as f:
             f.write(quant_blob)
@@ -2750,10 +2744,7 @@ def main() -> None:
         dist.barrier()
     with open("final_model.int6.ptz", "rb") as f:
         quant_blob_disk = f.read()
-    if _COMPRESSOR == "brotli":
-        quant_decompressed = brotli.decompress(quant_blob_disk)
-    else:
-        quant_decompressed = lzma.decompress(quant_blob_disk)
+    quant_decompressed = brotli.decompress(quant_blob_disk)
     quant_state = torch.load(
         io.BytesIO(_byte_unshuffle(quant_decompressed)),
         map_location="cpu",
