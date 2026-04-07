@@ -8,6 +8,7 @@ VARIANT="${VARIANT:-sp8192}"
 MATCHED_FINEWEB_REPO_ID="${MATCHED_FINEWEB_REPO_ID:-kevclark/parameter-golf}"
 DATA_ROOT="${DATA_ROOT:-/root/pgdata}"
 CACHE_ROOT="${CACHE_ROOT:-/root/pgcache}"
+INSTALL_RUNTIME_DEPS="${INSTALL_RUNTIME_DEPS:-1}"
 
 case "${VARIANT}" in
   sp8192)
@@ -68,8 +69,28 @@ else
   echo "==> Dataset/tokenizer already present; skipping download"
 fi
 
+echo "==> Runtime dependency check"
+if ! "${PYTHON_BIN}" - <<'PY' >/dev/null 2>&1
+import importlib
+for name in ("brotli", "sentencepiece", "torch", "huggingface_hub", "triton", "flash_attn_interface"):
+    importlib.import_module(name)
+PY
+then
+  if [ "${INSTALL_RUNTIME_DEPS}" = "1" ]; then
+    echo "==> Installing missing Python packages"
+    "${PYTHON_BIN}" -m pip install --no-cache-dir huggingface-hub sentencepiece brotli
+  else
+    echo "Missing runtime dependencies and INSTALL_RUNTIME_DEPS=0" >&2
+    exit 1
+  fi
+fi
+
 echo "==> Verification"
 "${PYTHON_BIN}" - <<PY
+import brotli
+import sentencepiece
+import torch
+import triton
 from pathlib import Path
 repo = Path(${REPO_ROOT@Q})
 dataset = repo / "data" / "datasets" / ${DATASET_DIR@Q}
@@ -81,4 +102,10 @@ print("tok_vocab", (tok_dir / ${TOKENIZER_VOCAB@Q}).exists())
 print("datasets_link", (repo / "data" / "datasets").resolve())
 print("tokenizers_link", (repo / "data" / "tokenizers").resolve())
 print("hf_cache", Path(${CACHE_ROOT@Q}) / "huggingface" / "hub")
+print("torch", torch.__version__)
+print("cuda", torch.version.cuda)
+print("gpu_count", torch.cuda.device_count())
+print("triton", triton.__version__)
+print("sentencepiece", sentencepiece.__version__)
+print("brotli", getattr(brotli, "__version__", "unknown"))
 PY
