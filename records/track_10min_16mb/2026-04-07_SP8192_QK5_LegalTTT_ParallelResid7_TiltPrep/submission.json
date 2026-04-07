@@ -1,0 +1,58 @@
+{
+  "architecture": "11L/512d/8H/4KV, MLP 4x, LeakyReLU(0.5)^2, Partial RoPE 16d, Depth-recurrence (loop layers 4-5 twice from 50% training), XSA last 4, GPTQ int6 matrices + int8 embeddings + SD-clip, Muon, EMA, Brotli+byte-shuffle, legal score-first TTT with LR=0.005 epochs=3 freeze=0",
+  "attribution": {
+    "base_pr1394": "@clarkkev",
+    "legal_ttt_framework": "@Christopher-Lee-McClendon (PR #461) and merged precedent PR #549",
+    "qk_gain_init_5": "@clarkkev (PR #1394 default is 4.0, we raised to 5.0)",
+    "sp8192_gptq_embeds_sdclip_muon_eq_r_depth_recur": "@clarkkev (PR #1394)"
+  },
+  "author": "dexhunter",
+  "base_pr": 1394,
+  "blurb": "Locally prepared, non-submission experiment folder derived from PR #1413 with dormant parallel-residual, skip-training, and corrected causal token-only n-gram tilt hooks for B/D/E ablations.",
+  "bytes_total": 15992546,
+  "compliance": {
+    "artifact_under_16mb": true,
+    "eval_under_600s": true,
+    "no_etlb": true,
+    "no_ngram_cache": true,
+    "no_pre_quant_ttt": true,
+    "no_slot": true,
+    "score_first_ttt": true,
+    "three_seeds": true,
+    "training_under_600s": true
+  },
+  "date": "2026-04-07",
+  "github_id": "dexhunter",
+  "mean_bpb": 1.08279384,
+  "name": "Local prep: PR #1413 parallel residual and n-gram variants",
+  "our_contribution": "Port of PR #1394's clean sp8192 stack to a legal score-first TTT eval (TTT_LR=0.005, 3 epochs, freeze 0 blocks) + single-knob QK_GAIN_INIT=5 verified on 3 seeds. All 3 seeds fit 16MB with 7-11KB margin.",
+  "platform": "GCP 8xH100 80GB SXM, PyTorch 2.9.1+cu128, NCCL socket",
+  "pre_ttt_sliding_mean": 1.08485681,
+  "seeds": {
+    "0": {
+      "bytes_total": 15991018,
+      "train_time_ms": 588004,
+      "ttt_time_ms": 293430,
+      "val_bpb": 1.08209788,
+      "val_loss": 2.79517119
+    },
+    "1234": {
+      "bytes_total": 15989058,
+      "train_time_ms": 588000,
+      "ttt_time_ms": 295337,
+      "val_bpb": 1.08313564,
+      "val_loss": 2.79785185
+    },
+    "42": {
+      "bytes_total": 15992546,
+      "train_time_ms": 588009,
+      "ttt_time_ms": 289945,
+      "val_bpb": 1.083148,
+      "val_loss": 2.79788378
+    }
+  },
+  "sliding_bpb_mean": 1.08485681,
+  "tokenizer": "SentencePiece BPE 8192",
+  "val_bpb": 1.08279384,
+  "val_bpb_method": "legal_ttt_exact_sliding_window_stride64"
+}

@@ -1,190 +1,169 @@
 # Project State
 
-Date: 2026-03-31
+Date: 2026-04-07
 
 ## Objective
 
 Primary:
-- keep Session 05c-plus as the current best measured branch
-- finish compression-path feasibility and decide whether the next larger fork should spend bytes on modest width or pivot to a different thesis
+
+- preserve the completed RunPod `#1394` SP8192 baseline as the new stable base
+- use the fetched local `#1394` archive and strict proof folder as the durable evidence base
+- move the foreground branch hunt to faithful `#1413`
 
 Secondary:
-- keep the Session 03 anchor as the fixed reference
-- preserve exact launch, logging, artifact, and evaluation discipline
 
-Completed:
-- Session 05e GPTQ probe: **negative result** (44/66 layers worse than naive). GPTQ permanently parked.
-- Session 05f follow-up: **negative result** vs 05c-plus (`1.12660664` vs `1.12557920`)
-- Session 05g follow-up: **negative result** vs 05c-plus (`1.12584234` vs `1.12557920`), with modest speed recovery but cap failure on the old export path
-- Initial compression-path probe: custom serialization + brotli-10 materially outperforms the current `torch.save + zstd` path on both 05c-plus and 05g
+- keep `07c1` evidence background-only
+- do not let the failed Pegasus TTT reruns consume foreground attention
 
 ## Current campaign state
 
-- campaign scaffolding exists under `docs/campaign/`
-- shared handoff file is `docs/campaign/AGENT_SYNC.md`
-- evidence summary is `docs/campaign/artifacts/2026-03-28_a100_evidence_summary.md`
-- coordination entry points exist:
-  - `AGENTS.md`
-  - `CLAUDE.md`
-- Session 03 anchor run is complete
-- Session 05b GPTQ implementation exists but is parked on the current anchor after 7 conclusive ablations
-- Session 05c-plus code and smoke harness are implemented and pushed
-- Session 05e same-checkpoint export-only replay completed and closed the GPTQ question for this model family
-- Offline analysis utilities now live under `scripts/diagnostics/`
+- `05c-plus` is superseded
+- `07c` and `07c1` validated the move away from the old compression line, but they are no longer the foreground branch
+- the faithful `#1394` SP8192 RunPod baseline is now complete on `8xH100 SXM`
+- packaging fix is validated on the real RunPod checkpoint:
+  - counted code bytes: `17,821`
+  - all three completed seeds are under the 16 MB cap
+- the preserved archive has now been fetched locally:
+  - `artifacts/runpod_pull/pr1394_archive_2026-04-07/pr1394_archive_2026-04-07.tgz`
+  - SHA256: `95e3a38cc89a160469d8417d0d4dbd40ef6a5106803d25ccdab5c0f86e2c0b07`
+- the extracted local recovery directory is:
+  - `artifacts/runpod_pull/pr1394_archive_2026-04-07/pr1394_archive_2026-04-07`
+- preserved archive contents include:
+  - all three seed logs
+  - copied `train_gpt.py`
+  - summary / manifest / checksums
+  - exact `2025` checkpoint binaries
+- exact `1337` and `42` checkpoint binaries are not preserved; only their logs and measured outputs remain
+- the local strict proof folder has been built:
+  - `records/track_10min_16mb/2026-04-07_pr1394_sp8192_runpod_strict`
+- the hardened RunPod data/deps prep helper exists and is ready:
+  - `scripts/runpod_prepare_sp8192.sh`
 
-## Verified hardware state
+## Current best measured results
 
-- Pegasus `A100-80GB` path works
-- Pegasus `1xH100` path works
-- Pegasus `8xH100` path works when launched with Slurm-native `srun`
-- Pegasus `8xH100` path does **not** work reliably with `torchrun --standalone` on `serv-3342`
-- NGC 26.03 container on Pegasus confirmed working with fscratch setup
-- Saved Pegasus FA3 container exists at `/netscratch/$USER/containers/pytorch_25.02_fa3.sqsh`
-- `1xH100` FA3 smoke is confirmed healthy
-- Stock `25.02` + `--no-deps` FA3 import is not viable on Pegasus
+### Best current foreground line
 
-## Locked baseline facts
+Completed `#1394` RunPod 3-seed baseline:
 
-- `1xA100` 600s baseline post-roundtrip exact: `val_bpb=1.37140771`
-- `1xH100` 600s baseline post-roundtrip exact: `val_bpb=1.30594735`
-- `8xH100` 600s baseline post-roundtrip exact: `val_bpb=1.23368511`
-- `8xH100` baseline step average: `51.66 ms`
-- `8xH100` baseline artifact size: `15871532` bytes
+- `1337`
+  - sliding s64: `1.08471849`
+  - roundtrip exact: `1.10134414`
+  - bytes total: `15,986,188`
+- `42`
+  - sliding s64: `1.08576707`
+  - roundtrip exact: `1.10263175`
+  - bytes total: `15,987,537`
+- `2025`
+  - sliding s64: `1.08513825`
+  - roundtrip exact: `1.10167670`
+  - bytes total: `15,986,526`
 
-## Current measured anchors
+Aggregate:
 
-- `8xH100` root baseline: `val_bpb=1.23368511` (step_avg `51.66 ms`, artifact `15871532` bytes)
-- `8xH100` Session 03 anchor:
-  - sliding s64 val_bpb: `1.12904446`
-  - pre-quant EMA val_bpb: `1.14472403`
-  - int6 roundtrip val_bpb: `1.15247273`
-  - steps: `6564`, step_avg: `91.37 ms`
-  - artifact: `15751324` bytes (model `15692752` + code `58572`)
-  - GPU: `8xH100 SXM5`, `serv-3342`, NGC 26.03 container
-- `8xH100` Session 05c-plus (quality-positive, throughput regressed):
-  - sliding s64 val_bpb: `1.12557920` (anchor delta: **-0.00347**)
-  - pre-quant EMA val_bpb: `1.14186715`
-  - int6 roundtrip val_bpb: `1.14933197`
-  - steps: `5977`, step_avg: `100.39 ms` (+9.02ms vs anchor)
-  - artifact: `15589271` bytes
-  - GPU: `8xH100`, NGC 26.03 container
-- `8xH100` Session 05f (negative vs 05c-plus):
-  - sliding s64 val_bpb: `1.12660664` (05c-plus delta: **+0.00103**)
-  - pre-quant EMA val_bpb: `1.14190308`
-  - int6 roundtrip val_bpb: `1.15026661`
-  - steps: `5977`, step_avg: `100.51 ms` (+0.12ms vs 05c-plus)
-  - artifact: `15630854` bytes (+41,583 bytes vs 05c-plus)
-  - GPU: `8xH100`, NGC 26.03 container
-- `8xH100` Session 05g (negative vs 05c-plus):
-  - sliding s64 val_bpb: `1.12584234` (05c-plus delta: **+0.00026**)
-  - pre-quant EMA val_bpb: `1.14203044`
-  - int6 roundtrip val_bpb: `1.14963535`
-  - steps: `6080`, step_avg: `98.67 ms` (-1.72ms vs 05c-plus)
-  - artifact: `16475467` bytes (+886,196 bytes vs 05c-plus, over cap on old export path)
-  - GPU: `8xH100`, NGC 26.03 container
+- mean sliding s64: `1.08520794`
+- mean roundtrip exact: `1.10188420`
+- max bytes total: `15,987,537`
 
-## Launcher lesson
+### Best `07c1` strict evidence
 
-Use:
-- Slurm-shaped allocation with `--ntasks=8 --gpus-per-task=1 --gpu-bind=none --cpus-per-task=6`
-- Slurm-native `srun`
-- env mapping inside the launch:
-  - `LOCAL_RANK=$SLURM_LOCALID`
-  - `RANK=$SLURM_PROCID`
-  - `WORLD_SIZE=$SLURM_NTASKS`
+- `07c1_runpod_base_s2025_strict`
+  - script: `records/track_non_record_16mb/2026-04-02_07c1_pr1212_ttt_evalfix/train_gpt.py`
+  - sliding s64: `1.10894203`
+  - roundtrip exact: `1.11863096`
+  - `val_loss = 1.87233216` nats
+  - bytes total: `15,728,840`
+  - train time: `598052ms`
 
-Do not use:
-- `torchrun --standalone` for Pegasus `8xH100`
+## Competitive reality
+
+Open frontier references as of 2026-04-07:
+
+- merged official `#1019`: `1.11473509` BPB / `1.88217853` nats
+- open clean `#1394`: `1.08563`
+- open `#1412`: `1.08354`
+- open `#1413`: `1.08279`
+- open `#1420`: `1.08014`
+- open `#1416`: `1.07948`
+- open `#1437`: `1.07800`
+
+Interpretation:
+
+- our completed `#1394` baseline is competitive with the clean SP8192 tier
+- it is about `0.00042` BPB better than the open `#1394` reference mean, on only 3 seeds instead of 5
+- it is still behind `#1413`, `#1420`, `#1416`, and `#1437`
+- the next real move is therefore `#1413`, not another `#1394` rerun and not more `07c1` polish
+
+## Background `07c1` state
+
+Locked `07c1` findings:
+
+- strict RunPod base proof covers four seeds
+- best strict seed: `1.10894203` BPB / `1.87233216` nats
+- strict 4-seed significance vs merged `#1019` is still strong:
+  - delta: `-0.00796789` nats
+  - Welch `t = -6.8667`
+  - one-sided `p = 0.001785`
+- falsified levers:
+  - `QK_GAIN=5.0`
+  - `MLP_MULT=3.08`
+- `MLP_MULT=3.5` remains over cap under current export
+- TTT remains unresolved because the repaired Pegasus reruns have not yet produced a clean measured answer
+
+Pegasus background jobs:
+
+- `2740306` `07c1_ttt_s1337_fix`
+- `2740307` `07c1_ttt_s2025_fix`
+- latest state for both jobs on Pegasus: `FAILED`
+
+## Verified hardware / workflow state
+
+- RunPod `8xH100 SXM` is a valid foreground reproduction lane
+- Pegasus remains the canonical validator, but is not the current foreground execution path
+- for this migration pod shape:
+  - `/workspace` persists across `Stop`
+  - `/root` is not reliable across `Stop`
+- the old `scripts/runpod_fetch_logs.sh` assumption of a clean direct SSH/`rsync` path is not reliable for the current gateway-only pod
+- direct TCP SSH forwarding can still refuse connections even while `sshd` is listening inside the pod
+- the working recovery path was a PTY-driven gateway shell with local base64 capture and checksum verification
 
 ## What has been demonstrated
 
-- end-to-end training, evaluation, compression, and roundtrip validation
-- controlled negative results (`LowerLR`, `Warmdown3600`)
-- small A100 seed spread
-- first challenge-shaped root baseline on real `8xH100`
-- Session 03 pre-TTT anchor port: sliding s64 val_bpb `1.12904446` on `8xH100`
-- int6+zstd roundtrip under the 16MB cap with `248676` bytes headroom
-- small remaining donor gap with both throughput and export fidelity still worth isolated measurement
-- NGC container + fscratch confirmed as optimized Pegasus path
-- GPTQ-lite percentile clip search does not help at this scale (Session 04 Delta 1 negative result: worse BPB + artifact cap violation)
-- LeakyReLU^2 activation is neutral (Session 04 Delta 2: sliding s64 val_bpb effectively identical at `1.12904123`, but slightly better quantization metrics and 168KB smaller artifact; slower step time cancels quality gain)
-- The local public `1.1194` record is not “TTT only”: its pre-TTT base is already `1.1218` at `83.4 ms`, so stronger pre-TTT work and throughput matter before TTT can close the remaining gap
-- Direct FA3 on Pegasus was benchmark-backed as a hypothesis, but the saved-container end-to-end path is now a measured negative result.
-- The FA3 deployment path is operationally understood, but the current saved-container runtime is not a throughput candidate.
-- The first `1xH100` GPTQ smoke successfully exercised Hessian collection, quantization, compression, reload, and eval.
-- That same smoke also exposed a correctness failure in the current GPTQ quantizer: roundtrip exact `1.68963326` vs pre-quant exact `1.47753094`.
-- The first replay-based Hessian repair also failed: `replay_ref_hfix` reached `2.15770170` from pre-quant `1.82064877`, with `gptq_diag` still reporting `66/66` layers worse than both naive baselines.
-- The 05e architecture probe also failed to rescue GPTQ on the new stack:
-  - pre-quant exact `3.95543154`
-  - naive roundtrip exact `3.96902897`
-  - GPTQ roundtrip exact `3.96902897`
-  - `worse_than_naive_rowmax = 44/66`
-- The checkpoint-diagnostics workflow is now operational on the best measured branch:
-  - backed up `final_model.pt`, `final_model.int6.ptz`, and `train.log` under `diagnostics/2026-03-31_05c_plus/`
-  - pulled `diagnostics_float.txt` and `diagnostics_int6.txt` locally
-  - `scripts/diagnostics/diagnose_weights.py` now supports either:
-    - a single-model weight statistics report, or
-    - float-vs-int6 comparison mode on the same checkpoint
-- The compression-path feasibility workflow is operational:
-  - `scripts/diagnostics/compress_probe.py` tested 13 compression strategies on saved artifacts
-  - best measured path on both 05c-plus and 05g is `custom-shuffle + brotli-10`
-  - on 05c-plus it saved `149,991` bytes vs the current export baseline
-  - on 05g it saved `1,032,921` bytes and brought the branch back under the cap
-  - byte-shuffle itself contributes only `~8-10 KB`; custom serialization + brotli is the real win
+- faithful `#1394` reproduction can be completed under cap on RunPod `8xH100 SXM`
+- the packaging fix is sufficient to turn the real `1337` smoke result into a valid under-cap artifact
+- all three foreground seeds stayed in-family:
+  - `1337`: `1.08471849`
+  - `42`: `1.08576707`
+  - `2025`: `1.08513825`
+- `07c1` remains a credible background evidence line, but is clearly behind the SP8192 frontier family
 
-## Session 05b: Full Hessian GPTQ (2026-03-29)
+## What remains unresolved
 
-- Implementation: `records/track_non_record_16mb/2026-03-29_full_hessian_gptq/train_gpt.py`
-- Plan: `docs/campaign/artifacts/05b_full_hessian_gptq_plan.md`
-- Commit: `e00bc0a` pushed to origin/main
-- Algorithm: post-training calibration (128 seqs), Cholesky error compensation, block_size=128, actorder, percdamp=0.01
-- 4 new functions (~200 lines): `_make_hessian_hook`, `collect_hessians`, `gptq_quantize_layer`, `gptq_mixed_quantize_int6`
-- Export path restructured: rank-0-only GPTQ, barrier, all ranks read file for eval
-- **1xH100 smoke test: CORRECTNESS BUG** — roundtrip gap 0.212 BPB (27x worse than anchor's 0.00775)
-  - 66 layers GPTQ'd, 0 Cholesky fallbacks, 4.2s quantization, 7.75MB artifact
-  - Pipeline mechanics work, but quantized weights reconstruct poorly
-  - Must debug before 8xH100 run
-  - The `1xH100` training metrics are not anchor-comparable because the smoke run uses a different `WORLD_SIZE` and therefore different `grad_accum_steps`
-- **2026-03-29 code repair landed, rerun pending**
-  - local PR diff found the key loop mismatch: `W_block[:, j + 1:]` vs PR `W_block[:, j:]`
-  - the repaired code now matches the PR structure for:
-    - within-block residual propagation
-    - 5-percentile reconstruction search
-    - symmetric `[-31, 31]` clamp
-    - block-only `attn` / `mlp` Hessian targeting
-  - export now writes `gptq_layer_diagnostics.json` with per-layer naive-vs-GPTQ MSE and worst-block summaries
-  - this repo does not currently contain a saved checkpoint for same-checkpoint replay
-  - this local shell does not have `torch`, so verification here only reached `py_compile`
-- **2026-03-29 server replay still failed**
-  - `gptq_diag: worse_than_legacy_rowmax=66 worse_than_percentile_naive=66`
-  - roundtrip exact `2.15604597` vs pre-quant exact `1.82064982`
-  - the remaining failure is systematic
-  - export-only replay mode is now landed so the next ablations can use the saved `final_model.pt` directly
-- **2026-03-30 smaller Hessian-path repair also failed**
-  - commit on `main`: `9cea7e9`
-  - `replay_ref_hfix`: `1.82064877 -> 2.15770170`, gap `+0.33705293`
-  - `gptq_diag` remains `66/66` worse than both naive baselines
-  - the smaller forward-hook + average+damp patch is not enough
-  - next step should be a more faithful single-PR Hessian/quantization transplant
-
-## What has not happened yet
-
-- no vendor-tuned NGC FA3 runtime result yet
-- no top-tier leaderboard-adjacent result yet
-- no seed-validation run yet for 05c-plus (throughput regression makes it premature)
-- no committed compression-path upgrade yet
-- no corrected width-feasibility rerun yet after the initial probe
+- whether `#1413` reproduces cleanly on the same RunPod lane
+- whether `#1437` should be climbed only after `#1413` or whether one later direct reproduction is worth it
+- whether repaired `07c1` TTT is positive enough to matter strategically at all
+- which originality lane to open once the `#1413` question is answered
+- what to do only after the first faithful `#1413` seed-0 result is in hand
 
 ## Best next move
 
-- **Rerun the corrected compression probe, then choose one coherent larger fork**
-- Keep 05c-plus as the best measured branch for now
-- 05f and 05g are clean negatives and should not receive more 8xH100 time
-- Preferred diagnostic approaches going forward:
-  - `python scripts/diagnostics/diagnose_weights.py final_model.pt` for single-checkpoint weight stats
-  - `python scripts/diagnostics/diagnose_weights.py final_model.pt final_model.int6.ptz` for float-vs-int6 comparison
-  - `python scripts/diagnostics/compress_probe.py diagnostics/2026-03-31_05c_plus/final_model.int6.ptz` for export-path feasibility
-  - correlate those reports with the measured 05c-plus / 05f / 05g logs before proposing the next branch
-- Use the corrected compression probe to decide whether the next big fork is:
-  - compression-path upgrade + modest width, or
-  - a different larger fork that does not depend on width unlock
+**Strategy pivot (2026-04-07):** Instead of launching only one faithful `#1413` seed, the A/B/C/D/E offline experiment suite is now prepared for one-shot batch execution.
+
+Prepared artifacts (ready locally, pushed to git):
+
+- `scripts/prepare_pr1413_variants.py` — materializes both local record folders from real local refs
+- `scripts/runpod_1413_batch.sh` — sequential batch runner for A/B/C/D/E
+- `records/track_10min_16mb/2026-04-07_SP8192_QK5_LegalTTT_LocalBase/` — faithful #1413 base mirror (16,719 code bytes)
+- `records/track_10min_16mb/2026-04-07_SP8192_QK5_LegalTTT_ParallelResid7_TiltPrep/` — stack variant with parallel-residual and n-gram hooks (17,390 code bytes)
+
+On the next paid RunPod `8xH100 SXM` pod:
+
+1. `git pull --ff-only` to sync the prepared folders
+2. `bash scripts/runpod_1413_batch.sh 0` to run A/B/C/D/E in sequence
+3. Run E requires the D checkpoint — the batch runner enforces this automatically
+4. Terminate/delete the old CPU-only recovery pod when convenient
+5. Keep Pegasus `07c1` TTT jobs in the background only
+
+Remaining offline blockers:
+
+- proof of actual execution on a real pod is still needed (no pod run yet)
+- artifact-cap margin for B/D/E (code + model) is unmeasured until a real stack run completes

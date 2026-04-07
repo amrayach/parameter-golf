@@ -1,0 +1,71 @@
+{
+  "base_ref": "pr1413",
+  "base_source_sha256": "654fe27bace3bd3238831c6069d1f2e6c1268452dddfd03c522cea5724ba4c78",
+  "decoded_source_sha256": "5d38d696f1d57c92882c72678f0cc52653ecf8ce1947b62965df80cfea3d2beb",
+  "default_ngram_config": {
+    "NGRAM_AGREE_BONUS": 0.1,
+    "NGRAM_BASE_BETA": 2.0,
+    "NGRAM_OPEN_TABLE_BITS": 26,
+    "NGRAM_ORDER_STRIDE": 2,
+    "NGRAM_WITHIN_BETA": 0.0,
+    "NGRAM_WITHIN_THRESHOLD": 0.25,
+    "NGRAM_WORD_BETA": 0.0,
+    "NGRAM_WORD_THRESHOLD": 0.8
+  },
+  "default_parallel_residual_start": 7,
+  "default_skip_training": 0,
+  "fused_kernel_sha256": "6b11646609508a84f7c2d9ddd9cdb4c133c2474ec83a50b78313d96664984056",
+  "local_record_rel": "records/track_10min_16mb/2026-04-07_SP8192_QK5_LegalTTT_ParallelResid7_TiltPrep",
+  "ngram_tilt_sha256": "065ced48efcd5ae633f4307d254a0d3e475641878a0dc580f8e677b6e56aa379",
+  "runs": {
+    "A": {
+      "env": {},
+      "record_rel": "records/track_10min_16mb/2026-04-07_SP8192_QK5_LegalTTT_LocalBase"
+    },
+    "B": {
+      "env": {
+        "PARALLEL_RESIDUAL_START": 7
+      },
+      "record_rel": "records/track_10min_16mb/2026-04-07_SP8192_QK5_LegalTTT_ParallelResid7_TiltPrep"
+    },
+    "C": {
+      "env": {
+        "LOOP_END": 5,
+        "LOOP_START": 3
+      },
+      "record_rel": "records/track_10min_16mb/2026-04-07_SP8192_QK5_LegalTTT_LocalBase"
+    },
+    "D": {
+      "env": {
+        "LOOP_END": 5,
+        "LOOP_START": 3,
+        "PARALLEL_RESIDUAL_START": 7
+      },
+      "record_rel": "records/track_10min_16mb/2026-04-07_SP8192_QK5_LegalTTT_ParallelResid7_TiltPrep"
+    },
+    "E": {
+      "env": {
+        "LOOP_END": 5,
+        "LOOP_START": 3,
+        "NGRAM_AGREE_BONUS": 0.1,
+        "NGRAM_BASE_BETA": 2.0,
+        "NGRAM_OPEN_TABLE_BITS": 26,
+        "NGRAM_ORDER_STRIDE": 2,
+        "NGRAM_TILT_ENABLED": 1,
+        "NGRAM_WITHIN_BETA": 0.0,
+        "NGRAM_WITHIN_THRESHOLD": 0.25,
+        "NGRAM_WORD_BETA": 0.0,
+        "NGRAM_WORD_THRESHOLD": 0.8,
+        "PARALLEL_RESIDUAL_START": 7,
+        "SKIP_TRAINING": 1
+      },
+      "note": "Requires an existing final_model.int6.ptz in the stack folder, typically from run D.",
+      "record_rel": "records/track_10min_16mb/2026-04-07_SP8192_QK5_LegalTTT_ParallelResid7_TiltPrep"
+    }
+  },
+  "source_record_rel": "records/track_10min_16mb/2026-04-06_SP8192_QK5_LegalTTT_1.0828",
+  "stack_ref": "pr1437",
+  "stack_source_record_rel": "records/track_10min_16mb/2026-04-07_SP8192_ParallelResid7_Loop35_NgramTilt",
+  "variant": "parallel_residual_plus_corrected_token_only_ngram_prep",
+  "wrapper_bytes": 17390
+}
