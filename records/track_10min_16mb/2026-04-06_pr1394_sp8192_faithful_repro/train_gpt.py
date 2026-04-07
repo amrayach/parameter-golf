@@ -957,6 +957,14 @@ def _decompress(data: bytes, compressor: str) -> bytes:
     return raw
 
 
+def _minify_code(source: str) -> str:
+    """Create a self-extracting LZMA+base85 wrapper for artifact byte accounting."""
+    import base64
+    compressed = lzma.compress(source.encode("utf-8"), preset=9)
+    encoded = base64.b85encode(compressed)
+    return f"import lzma as L,base64 as B\nexec(L.decompress(B.b85decode({encoded!r})))\n"
+
+
 def serialize(h: Hyperparameters, base_model: torch.nn.Module, code: str) -> tuple[int, int]:
     code_bytes = len(code.encode("utf-8"))
     if h.is_main_process:
@@ -1328,6 +1336,7 @@ def train_and_eval(h: Hyperparameters, device: torch.device) -> None:
     np.random.seed(h.seed)
     torch.manual_seed(h.seed)
     torch.cuda.manual_seed_all(h.seed)
+    code = _minify_code(Path(__file__).read_text(encoding="utf-8"))
 
     val_data = ValidationData(h, device)
     log(f"train_shards: {len(list(Path(h.datasets_dir).resolve().glob('fineweb_train_*.bin')))}")
@@ -1337,7 +1346,7 @@ def train_and_eval(h: Hyperparameters, device: torch.device) -> None:
     torch._dynamo.reset()
     timed_eval("pre-quantization post-ema", eval_val, h, device, val_data, compiled_model)
 
-    serialize(h, base_model, Path(__file__).read_text(encoding="utf-8"))
+    serialize(h, base_model, code)
     if h.distributed:
         dist.barrier()
     eval_model = deserialize(h, device)
