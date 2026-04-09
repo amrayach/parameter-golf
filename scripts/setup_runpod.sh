@@ -39,31 +39,22 @@ fi
 echo "    HEAD: $(git rev-parse --short HEAD) — $(git log -1 --format=%s)"
 echo ""
 
-# ── 2. Download SP8192 dataset ───────────────────────────────────────────
-echo "==> [2/6] Downloading SP8192 dataset (this takes a few minutes)..."
-if [ -d "data/datasets/fineweb10B_sp8192" ]; then
-    EXISTING_SHARDS=$(ls data/datasets/fineweb10B_sp8192/fineweb_train_*.bin 2>/dev/null | wc -l)
-    if [ "${EXISTING_SHARDS}" -ge 80 ]; then
-        echo "    Dataset already present (${EXISTING_SHARDS} train shards). Skipping download."
-    else
-        echo "    Partial dataset found (${EXISTING_SHARDS} shards). Re-downloading..."
-        python3 data/cached_challenge_fineweb.py --variant sp8192
-    fi
-else
-    python3 data/cached_challenge_fineweb.py --variant sp8192
-fi
+# ── 2. Download SP8192 dataset via runpod_prepare_sp8192.sh ──────────────
+echo "==> [2/6] Downloading SP8192 dataset (this can take 10+ minutes)..."
+VARIANT=sp8192 PREPARE_SP8192=1 INSTALL_RUNTIME_DEPS=1 \
+  bash scripts/runpod_prepare_sp8192.sh 2>&1
 echo ""
 
 # ── 3. Verify dataset ───────────────────────────────────────────────────
 echo "==> [3/6] Verifying dataset..."
-TRAIN_COUNT=$(ls data/datasets/fineweb10B_sp8192/fineweb_train_*.bin 2>/dev/null | wc -l)
-VAL_COUNT=$(ls data/datasets/fineweb10B_sp8192/fineweb_val_*.bin 2>/dev/null | wc -l)
+TRAIN_COUNT=$(find data/datasets/fineweb10B_sp8192/ -maxdepth 1 -name 'fineweb_train_*.bin' 2>/dev/null | wc -l)
+VAL_COUNT=$(find data/datasets/fineweb10B_sp8192/ -maxdepth 1 -name 'fineweb_val_*.bin' 2>/dev/null | wc -l)
 echo "    Train shards: ${TRAIN_COUNT}"
 echo "    Val shards:   ${VAL_COUNT}"
 if [ "${TRAIN_COUNT}" -lt 80 ]; then
     echo "    WARNING: Expected >=80 train shards, got ${TRAIN_COUNT}"
 fi
-ls data/tokenizers/fineweb_*8192* 2>/dev/null | head -2 | sed 's/^/    Tokenizer: /'
+find data/tokenizers/ -name 'fineweb_*8192*' 2>/dev/null | head -2 | sed 's/^/    Tokenizer: /'
 echo ""
 
 # ── 4. Verify GPU setup ─────────────────────────────────────────────────
