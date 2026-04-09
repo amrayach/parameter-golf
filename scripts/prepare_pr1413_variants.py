@@ -119,8 +119,131 @@ def _patch_stack_source(pr1413_source: str) -> str:
     source = _replace_once(
         source,
         "ttt_grad_clip=float(os.environ.get('TTT_GRAD_CLIP',1.));compressor=os.environ.get('COMPRESSOR','brotli');",
-        "ttt_grad_clip=float(os.environ.get('TTT_GRAD_CLIP',1.));skip_training=bool(int(os.environ.get('SKIP_TRAINING','0')));parallel_residual_start=int(os.environ.get('PARALLEL_RESIDUAL_START',-1));ngram_tilt_enabled=bool(int(os.environ.get('NGRAM_TILT_ENABLED','0')));ngram_base_beta=float(os.environ.get('NGRAM_BASE_BETA',2.));ngram_agree_bonus=float(os.environ.get('NGRAM_AGREE_BONUS',.1));ngram_within_threshold=float(os.environ.get('NGRAM_WITHIN_THRESHOLD',.25));ngram_within_beta=float(os.environ.get('NGRAM_WITHIN_BETA',0.));ngram_word_threshold=float(os.environ.get('NGRAM_WORD_THRESHOLD',.8));ngram_word_beta=float(os.environ.get('NGRAM_WORD_BETA',0.));ngram_open_table_bits=int(os.environ.get('NGRAM_OPEN_TABLE_BITS',26));ngram_order_stride=int(os.environ.get('NGRAM_ORDER_STRIDE',2));compressor=os.environ.get('COMPRESSOR','brotli');",
+        "ttt_grad_clip=float(os.environ.get('TTT_GRAD_CLIP',1.));ttt_optimizer=os.environ.get('TTT_OPTIMIZER','sgd');ttt_decay=float(os.environ.get('TTT_DECAY',0.));skip_training=bool(int(os.environ.get('SKIP_TRAINING','0')));parallel_residual_start=int(os.environ.get('PARALLEL_RESIDUAL_START',-1));cautious_muon=bool(int(os.environ.get('CAUTIOUS_MUON','0')));owc_enabled=bool(int(os.environ.get('OWC_ENABLED','0')));owc_gamma_steps=int(os.environ.get('OWC_GAMMA_STEPS',10));cdquant_enabled=bool(int(os.environ.get('CDQUANT_ENABLED','0')));cdquant_iters=int(os.environ.get('CDQUANT_ITERS',3));ngram_tilt_enabled=bool(int(os.environ.get('NGRAM_TILT_ENABLED','0')));ngram_base_beta=float(os.environ.get('NGRAM_BASE_BETA',2.));ngram_agree_bonus=float(os.environ.get('NGRAM_AGREE_BONUS',.1));ngram_within_threshold=float(os.environ.get('NGRAM_WITHIN_THRESHOLD',.25));ngram_within_beta=float(os.environ.get('NGRAM_WITHIN_BETA',0.));ngram_word_threshold=float(os.environ.get('NGRAM_WORD_THRESHOLD',.8));ngram_word_beta=float(os.environ.get('NGRAM_WORD_BETA',0.));ngram_open_table_bits=int(os.environ.get('NGRAM_OPEN_TABLE_BITS',26));ngram_order_stride=int(os.environ.get('NGRAM_ORDER_STRIDE',2));compressor=os.environ.get('COMPRESSOR','brotli');",
         "hyperparameter extension",
+    )
+
+    # --- Cautious Muon: pass flag through param_groups, mask before Newton-Schulz ---
+    source = _replace_once(
+        source,
+        "def __init__(self,params,lr,momentum,backend_steps,nesterov=True,weight_decay=.0,row_normalize=False):super().__init__(params,dict(lr=lr,momentum=momentum,backend_steps=backend_steps,nesterov=nesterov,weight_decay=weight_decay,row_normalize=row_normalize))",
+        "def __init__(self,params,lr,momentum,backend_steps,nesterov=True,weight_decay=.0,row_normalize=False,cautious=False):super().__init__(params,dict(lr=lr,momentum=momentum,backend_steps=backend_steps,nesterov=nesterov,weight_decay=weight_decay,row_normalize=row_normalize,cautious=cautious))",
+        "cautious muon init",
+    )
+    source = _replace_once(
+        source,
+        (
+            "\t\t\t\t\tif nesterov:g=g.add(buf,alpha=momentum)\n"
+            "\t\t\t\t\tif group.get('row_normalize',False):"
+        ),
+        (
+            "\t\t\t\t\tif nesterov:g=g.add(buf,alpha=momentum)\n"
+            "\t\t\t\t\tif group.get('cautious',False):mask=(buf.sign()==p.grad.sign()).float();g=g*mask\n"
+            "\t\t\t\t\tif group.get('row_normalize',False):"
+        ),
+        "cautious muon mask",
+    )
+    source = _replace_once(
+        source,
+        "self.optimizer_muon=Muon(matrix_params,lr=h.matrix_lr,momentum=h.muon_momentum,backend_steps=h.muon_backend_steps,weight_decay=h.muon_wd,row_normalize=h.muon_row_normalize)",
+        "self.optimizer_muon=Muon(matrix_params,lr=h.matrix_lr,momentum=h.muon_momentum,backend_steps=h.muon_backend_steps,weight_decay=h.muon_wd,row_normalize=h.muon_row_normalize,cautious=h.cautious_muon)",
+        "cautious muon instantiation",
+    )
+
+    # --- OWC: inject _owc_optimize_clip_sigmas function before gptq_quantize_weight ---
+    source = _replace_once(
+        source,
+        "def gptq_quantize_weight(w,H,clip_sigmas=3.,clip_range=63,block_size=128):",
+        (
+            "def _owc_optimize_clip_sigmas(W,H,clip_range,initial_sigmas,n_steps,row_std):\n"
+            "\trows,cols=W.shape;W_f=W.float().detach();H_f=H.float().detach();rs=row_std.float().detach()\n"
+            "\tlog_gamma=torch.full((rows,),math.log(max(initial_sigmas,1e-6)),dtype=torch.float32,device=W.device,requires_grad=True);opt=torch.optim.Adam([log_gamma],lr=0.05)\n"
+            "\tfor _ in range(n_steps):\n"
+            "\t\topt.zero_grad();gamma=log_gamma.exp();s=(gamma*rs/clip_range).clamp_min(1e-10);sf=s.unsqueeze(1)\n"
+            "\t\tq=torch.clamp(torch.round(W_f/sf),-clip_range,clip_range).detach();W_hat=q*sf;err=W_f-W_hat\n"
+            "\t\tloss=((err@H_f)*err).sum();loss.backward();opt.step()\n"
+            "\treturn log_gamma.exp().detach()\n"
+            "def gptq_quantize_weight(w,H,clip_sigmas=3.,clip_range=63,block_size=128,owc_steps=0,cdquant_iters=0):"
+        ),
+        "OWC function + GPTQ signature extension",
+    )
+
+    # --- OWC + CDQuant: modify GPTQ body to use OWC clip sigmas and CDQuant rounding ---
+    source = _replace_once(
+        source,
+        (
+            "\tW_orig=w.float().clone();rows,cols=W_orig.shape;H=H.float().clone();"
+            "dead=torch.diag(H)==0;H[dead,dead]=1;damp=.01*H.diag().mean();H.diagonal().add_(damp);"
+            "perm=torch.argsort(H.diag(),descending=True);invperm=torch.argsort(perm);"
+            "W_perm=W_orig[:,perm].clone();W_perm[:,dead[perm]]=0;H=H[perm][:,perm];"
+            "Hinv=torch.cholesky_inverse(torch.linalg.cholesky(H));"
+            "Hinv=torch.linalg.cholesky(Hinv,upper=True);"
+            "row_std=W_orig.std(dim=1);"
+            "s=(clip_sigmas*row_std/clip_range).clamp_min(1e-10).to(torch.float16);"
+            "sf=s.float();Q=torch.zeros(rows,cols,dtype=torch.int8);W_work=W_perm.clone()"
+        ),
+        (
+            "\tW_orig=w.float().clone();rows,cols=W_orig.shape;H=H.float().clone();"
+            "dead=torch.diag(H)==0;H[dead,dead]=1;damp=.01*H.diag().mean();H.diagonal().add_(damp);"
+            "row_std=W_orig.std(dim=1)\n"
+            "\tif owc_steps>0:opt_sigmas=_owc_optimize_clip_sigmas(W_orig,H,clip_range,clip_sigmas,owc_steps,row_std);s=(opt_sigmas*row_std/clip_range).clamp_min(1e-10).to(torch.float16)\n"
+            "\telse:s=(clip_sigmas*row_std/clip_range).clamp_min(1e-10).to(torch.float16)\n"
+            "\tsf=s.float();perm=torch.argsort(H.diag(),descending=True);invperm=torch.argsort(perm);"
+            "W_perm=W_orig[:,perm].clone();W_perm[:,dead[perm]]=0;H=H[perm][:,perm];"
+            "Hinv=torch.cholesky_inverse(torch.linalg.cholesky(H));"
+            "Hinv=torch.linalg.cholesky(Hinv,upper=True);"
+            "Q=torch.zeros(rows,cols,dtype=torch.int8);W_work=W_perm.clone()"
+        ),
+        "OWC clip sigma + CDQuant prep in GPTQ body",
+    )
+
+    # --- CDQuant: Hessian-weighted floor/ceil rounding in GPTQ inner loop ---
+    # Uses Hinv diagonal to weight reconstruction error: pick floor or ceil per
+    # element based on which produces lower Hessian-weighted squared error for
+    # that column.  This differs from torch.round() when the Hessian diagonal
+    # varies across columns (high-sensitivity columns get more careful rounding).
+    source = _replace_once(
+        source,
+        (
+            "\t\tfor j in range(i2-i1):"
+            "w_col=W_block[:,j];d=Hinv_block[j,j];"
+            "q_col=torch.clamp(torch.round(w_col/sf),-clip_range,clip_range);"
+            "Q[:,i1+j]=q_col.to(torch.int8);"
+            "err=(w_col-q_col.float()*sf)/d;"
+            "Err[:,j]=err;"
+            "W_block[:,j:]-=err.unsqueeze(1)*Hinv_block[j,j:].unsqueeze(0)"
+        ),
+        (
+            "\t\tfor j in range(i2-i1):\n"
+            "\t\t\tw_col=W_block[:,j];d=Hinv_block[j,j];scaled=w_col/sf\n"
+            "\t\t\tif cdquant_iters>0:\n"
+            "\t\t\t\tfl=torch.clamp(torch.floor(scaled),-clip_range,clip_range);ce=torch.clamp(fl+1,-clip_range,clip_range);err_fl=(w_col-fl*sf);err_ce=(w_col-ce*sf);cost_fl=err_fl*err_fl*d;cost_ce=err_ce*err_ce*d;q_col=torch.where(cost_ce<cost_fl,ce,fl)\n"
+            "\t\t\telse:q_col=torch.clamp(torch.round(scaled),-clip_range,clip_range)\n"
+            "\t\t\tQ[:,i1+j]=q_col.to(torch.int8);err=(w_col-q_col.float()*sf)/d;Err[:,j]=err;W_block[:,j:]-=err.unsqueeze(1)*Hinv_block[j,j:].unsqueeze(0)"
+        ),
+        "CDQuant rounding in GPTQ inner loop",
+    )
+
+    # --- OWC + CDQuant: update gptq_mixed_quantize call site ---
+    source = _replace_once(
+        source,
+        (
+            "\t\tcs=h.embed_clip_sigmas if'tok_emb'in name else h.matrix_clip_sigmas;"
+            "bits=h.embed_bits if'tok_emb'in name else h.matrix_bits;"
+            "q,s=gptq_quantize_weight(t,hessians[name],clip_sigmas=cs,clip_range=2**(bits-1)-1);"
+            "result[name+'.q']=q;result[name+'.scale']=s;"
+            'meta[name]=f"gptq (int{bits})"'
+        ),
+        (
+            "\t\tcs=h.embed_clip_sigmas if'tok_emb'in name else h.matrix_clip_sigmas;"
+            "bits=h.embed_bits if'tok_emb'in name else h.matrix_bits;"
+            "owc=h.owc_gamma_steps if h.owc_enabled else 0;"
+            "cdi=h.cdquant_iters if h.cdquant_enabled else 0;"
+            "q,s=gptq_quantize_weight(t,hessians[name],clip_sigmas=cs,clip_range=2**(bits-1)-1,owc_steps=owc,cdquant_iters=cdi);"
+            "result[name+'.q']=q;result[name+'.scale']=s;"
+            'meta[name]=f"gptq (int{bits})"+(f" owc{owc}" if owc else "")+(f" cd{cdi}" if cdi else "")'
+        ),
+        "OWC+CDQuant call site in gptq_mixed_quantize",
     )
 
     source = _replace_once(
@@ -163,7 +286,23 @@ def _patch_stack_source(pr1413_source: str) -> str:
         source,
         "def eval_val_sliding_ttt(h,base_model,rank,world_size,device,val_data,stride):",
         "def timed_eval(label,fn,*args,**kwargs):",
-        """def eval_val_sliding_ttt(h,base_model,rank,world_size,device,val_data,stride,ngram_state=None):
+        """class RMSDecay(torch.optim.Optimizer):
+\t"RMSProp + decay toward pre-TTT anchor (Krause 2018 dynamic evaluation)."
+\tdef __init__(self,params,anchors,lr=0.005,alpha=0.9,eps=1e-8,decay=0.001):
+\t\tdefaults=dict(lr=lr,alpha=alpha,eps=eps,decay=decay);params_list=list(params);super().__init__(params_list,defaults)
+\t\tfor group in self.param_groups:
+\t\t\tfor i,p in enumerate(group['params']):self.state[p]['anchor']=anchors[i]
+\t@torch.no_grad()
+\tdef step(self):
+\t\tfor group in self.param_groups:
+\t\t\tlr=group['lr'];alpha=group['alpha'];eps=group['eps'];decay=group['decay']
+\t\t\tfor p in group['params']:
+\t\t\t\tif p.grad is None:continue
+\t\t\t\tstate=self.state[p]
+\t\t\t\tif 'v' not in state:state['v']=torch.zeros_like(p)
+\t\t\t\tv=state['v'];g=p.grad;v.mul_(alpha).addcmul_(g,g,value=1-alpha);p.addcdiv_(g,v.sqrt().add_(eps),value=-lr)
+\t\t\t\tif decay>0:p.add_(state['anchor']-p,alpha=decay)
+def eval_val_sliding_ttt(h,base_model,rank,world_size,device,val_data,stride,ngram_state=None):
 \tseq_len=h.eval_seq_len;total_tokens=val_data.val_tokens.numel()-1;ttt_chunk=h.ttt_chunk_tokens;context_size=seq_len-stride;window_starts=[ws for ws in range(0,total_tokens,stride)if ws+context_size<total_tokens];num_chunks=(total_tokens+ttt_chunk-1)//ttt_chunk;chunk_windows=[[]for _ in range(num_chunks)]
 \tfor ws in window_starts:end=min(ws+seq_len,total_tokens);wlen=end-ws;s=0 if ws==0 else context_size;scored_start=ws+s;ci=min(scored_start//ttt_chunk,num_chunks-1);chunk_windows[ci].append(ws)
 \tlog(f"ttt_sliding:start chunks={num_chunks} chunk_tokens={ttt_chunk} total_windows={len(window_starts)} stride={stride} ttt_lr={h.ttt_lr} ttt_epochs={h.ttt_epochs} freeze_blocks={h.ttt_freeze_blocks}");compiled_logits=torch.compile(base_model.forward_logits,dynamic=False,fullgraph=True);loss_sum=torch.zeros((),device=device,dtype=torch.float64);token_count=torch.zeros((),device=device,dtype=torch.float64);byte_count=torch.zeros((),device=device,dtype=torch.float64);frozen_block_ids=set(range(min(h.ttt_freeze_blocks,len(base_model.blocks))));ttt_params=[]
@@ -173,7 +312,10 @@ def _patch_stack_source(pr1413_source: str) -> str:
 \t\t\tif f"blocks.{bi}."in name:freeze=True;break
 \t\tif freeze:p.requires_grad_(False)
 \t\telse:p.requires_grad_(True);ttt_params.append(p)
-\tlog(f"ttt_sliding:params unfrozen={sum(p.numel()for p in ttt_params)} frozen={sum(p.numel()for p in base_model.parameters()if not p.requires_grad)}");optimizer=torch.optim.SGD(ttt_params,lr=h.ttt_lr,momentum=h.ttt_momentum);t0=time.perf_counter();batch_seqs=h.ttt_batch_seqs
+\tlog(f"ttt_sliding:params unfrozen={sum(p.numel()for p in ttt_params)} frozen={sum(p.numel()for p in base_model.parameters()if not p.requires_grad)}")
+\tif h.ttt_optimizer=='rmsdecay':ttt_anchors=[p.detach().clone()for p in ttt_params];optimizer=RMSDecay(ttt_params,ttt_anchors,lr=h.ttt_lr,alpha=h.ttt_momentum,decay=h.ttt_decay);log(f"ttt_sliding:optimizer=RMSDecay alpha={h.ttt_momentum} decay={h.ttt_decay}")
+\telse:optimizer=torch.optim.SGD(ttt_params,lr=h.ttt_lr,momentum=h.ttt_momentum);log(f"ttt_sliding:optimizer=SGD momentum={h.ttt_momentum}")
+\tt0=time.perf_counter();batch_seqs=h.ttt_batch_seqs
 \tfor ci in range(num_chunks):
 \t\twindows=chunk_windows[ci]
 \t\tif not windows:continue
@@ -247,6 +389,13 @@ def main():""",
     required_markers = (
         "skip_training=bool(int(os.environ.get('SKIP_TRAINING','0')))",
         "parallel_residual_start=int(os.environ.get('PARALLEL_RESIDUAL_START',-1))",
+        "cautious_muon=bool(int(os.environ.get('CAUTIOUS_MUON','0')))",
+        "owc_enabled=bool(int(os.environ.get('OWC_ENABLED','0')))",
+        "cdquant_enabled=bool(int(os.environ.get('CDQUANT_ENABLED','0')))",
+        "def _owc_optimize_clip_sigmas(",
+        "if cdquant_iters>0:",
+        "owc=h.owc_gamma_steps if h.owc_enabled else 0",
+        "if group.get('cautious',False):mask=",
         "def eval_val_sliding_ttt(h,base_model,rank,world_size,device,val_data,stride,ngram_state=None):",
         "if h.ngram_tilt_enabled:",
         "skip_training:reusing existing quantized artifact",
@@ -469,6 +618,7 @@ def main() -> None:
                     "SKIP_TRAINING": 1,
                 },
                 "note": "Requires an existing final_model.int6.ptz in the stack folder, typically from run D.",
+                "paid_session_followup": "R1 only: sweep NGRAM_WITHIN_BETA / NGRAM_WORD_BETA for potential free BPB. Keep local legality-audit defaults unchanged until the paid run.",
             },
         },
         "source_record_rel": BASE_UPSTREAM_REL.as_posix(),

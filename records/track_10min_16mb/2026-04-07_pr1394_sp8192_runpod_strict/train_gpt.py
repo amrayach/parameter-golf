@@ -104,8 +104,6 @@ class Hyperparameters():
     embed_bits = int(os.environ.get('EMBED_BITS', 8))
     matrix_clip_sigmas = float(os.environ.get('MATRIX_CLIP_SIGMAS', 12.85))
     embed_clip_sigmas = float(os.environ.get('EMBED_CLIP_SIGMAS', 20.0))
-    owc_enabled = bool(int(os.environ.get('OWC_ENABLED', '0')))
-    owc_gamma_steps = int(os.environ.get('OWC_GAMMA_STEPS', 10))
 
     # Distributed setup
     distributed = "RANK" in os.environ and "WORLD_SIZE" in os.environ
@@ -798,47 +796,12 @@ def collect_hessians(
     return hessians
 
 
-def _owc_optimize_clip_sigmas(
-    W: Tensor,
-    H: Tensor,
-    clip_range: int,
-    initial_sigmas: float,
-    n_steps: int,
-    row_std: Tensor,
-) -> Tensor:
-    """Per-row optimal weight clipping via STE gradient descent on Hessian-weighted MSE."""
-    rows, cols = W.shape
-    W_f = W.float().detach()
-    H_f = H.float().detach()
-    rs = row_std.float().detach()
-
-    # Optimizes absolute clip sigma starting from current value, not a gamma multiplier.
-    log_gamma = torch.full((rows,), math.log(max(initial_sigmas, 1e-6)),
-                           dtype=torch.float32, device=W.device, requires_grad=True)
-    opt = torch.optim.Adam([log_gamma], lr=0.05)
-
-    for _ in range(n_steps):
-        opt.zero_grad()
-        gamma = log_gamma.exp()
-        s = (gamma * rs / clip_range).clamp_min(1e-10)
-        sf = s.unsqueeze(1)
-        q = torch.clamp(torch.round(W_f / sf), -clip_range, clip_range).detach()
-        W_hat = q * sf
-        err = W_f - W_hat
-        loss = ((err @ H_f) * err).sum()
-        loss.backward()
-        opt.step()
-
-    return log_gamma.exp().detach()
-
-
 def gptq_quantize_weight(
     w: Tensor,
     H: Tensor,
     clip_sigmas: float = 3.0,
     clip_range: int = 63,
     block_size: int = 128,
-    owc_steps: int = 0,
 ) -> tuple[Tensor, Tensor]:
     W_orig = w.float().clone()
     rows, cols = W_orig.shape
@@ -849,14 +812,6 @@ def gptq_quantize_weight(
     damp = 0.01 * H.diag().mean()
     H.diagonal().add_(damp)
 
-    row_std = W_orig.std(dim=1)
-    if owc_steps > 0:
-        opt_sigmas = _owc_optimize_clip_sigmas(W_orig, H, clip_range, clip_sigmas, owc_steps, row_std)
-        s = (opt_sigmas * row_std / clip_range).clamp_min(1e-10).to(torch.float16)
-    else:
-        s = (clip_sigmas * row_std / clip_range).clamp_min(1e-10).to(torch.float16)
-    sf = s.float()
-
     perm = torch.argsort(H.diag(), descending=True)
     invperm = torch.argsort(perm)
     W_perm = W_orig[:, perm].clone()
@@ -865,6 +820,10 @@ def gptq_quantize_weight(
 
     Hinv = torch.cholesky_inverse(torch.linalg.cholesky(H))
     Hinv = torch.linalg.cholesky(Hinv, upper=True)
+
+    row_std = W_orig.std(dim=1)
+    s = (clip_sigmas * row_std / clip_range).clamp_min(1e-10).to(torch.float16)
+    sf = s.float()
 
     Q = torch.zeros(rows, cols, dtype=torch.int8)
     W_work = W_perm.clone()
@@ -903,13 +862,11 @@ def gptq_mixed_quantize(
             continue
         cs = h.embed_clip_sigmas if "tok_emb" in name else h.matrix_clip_sigmas
         bits = h.embed_bits if "tok_emb" in name else h.matrix_bits
-        owc = h.owc_gamma_steps if h.owc_enabled else 0
         q, s = gptq_quantize_weight(
-            t, hessians[name], clip_sigmas=cs, clip_range=2**(bits - 1) - 1,
-            owc_steps=owc)
+            t, hessians[name], clip_sigmas=cs, clip_range=2**(bits - 1) - 1)
         result[name + ".q"] = q
         result[name + ".scale"] = s
-        meta[name] = f"gptq (int{bits})" + (f" owc{owc}" if owc else "")
+        meta[name] = f"gptq (int{bits})"
 
     categories = collections.defaultdict(set)
     for name, cat in meta.items():

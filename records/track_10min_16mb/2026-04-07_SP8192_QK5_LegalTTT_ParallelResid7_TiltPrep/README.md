@@ -31,8 +31,8 @@ Important defaults for corrected token-only n-gram tilt:
 Materialization summary:
 
 - local record folder: `records/track_10min_16mb/2026-04-07_SP8192_QK5_LegalTTT_ParallelResid7_TiltPrep`
-- wrapped code bytes: `17390`
-- decoded source sha256: `5d38d696f1d57c92882c72678f0cc52653ecf8ce1947b62965df80cfea3d2beb`
+- wrapped code bytes: `18510`
+- decoded source sha256: `897388636a2fbf42848ce3993f6d361e9947f1482e5a818050daaf90332f52e9`
 - sidecar sha256:
   - `ngram_tilt.py`: `065ced48efcd5ae633f4307d254a0d3e475641878a0dc580f8e677b6e56aa379`
   - `fused_expert_kernel.cpp`: `6b11646609508a84f7c2d9ddd9cdb4c133c2474ec83a50b78313d96664984056`

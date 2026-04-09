@@ -28,6 +28,11 @@ Read these files in this exact order before doing anything else:
 - Session 04 Delta 1 GPTQ-lite: **FAILED** (artifact over cap)
 - Session 04 Delta 2 LeakyReLU²: **NEUTRAL** (effectively identical sliding s64)
 - Local public #1 record: pre-TTT `1.1218`, post-TTT `1.1194`, step_avg `83.4 ms`
+- FA3 microbenchmark is complete:
+  - `26.03` SDPA flash: `1.967 ms/iter`
+  - `25.02` SDPA flash: `1.889 ms/iter`
+  - `25.02` direct FA3: `0.165 ms/iter`
+  - interpret this as kernel-only evidence, not full training speed
 - Leaderboard entry threshold: `≤ 1.1178`
 - Gap from anchor to threshold: `0.0112 BPB`
 
@@ -44,7 +49,7 @@ Produce a ranked Session 05 implementation plan that improves leaderboard odds b
 - Be strict about attribution and challenge legality.
 - Separate portable first-wave changes from harder second-wave rewrites.
 - Do not assume TTT alone closes the gap — #1's pre-TTT base is already `1.1218`.
-- Do not assume FA3 is available on Pegasus NGC container — verify portability requirements first.
+- Do not assume the FA3 microbenchmark translates directly into full training-step speedup.
 - Do not combine throughput, pre-TTT, and TTT changes in one unattributable run.
 
 ## Required outputs
@@ -53,7 +58,7 @@ Produce a ranked Session 05 implementation plan that improves leaderboard odds b
 - Explain likely contributors to `91.37 ms` vs `83.4 ms`
 - Rank by portability and expected impact
 - Specifically answer: is FA3 the first thing to try?
-- Verify whether `flash_attn_interface` / `flash_attn` is already present in the Pegasus NGC 26.03 container path; if not, estimate portability cost and risk — do not turn this into a package-install session
+- Incorporate the measured benchmark result and state the recommended experiment container path
 - Identify the tensor layout change needed (SDPA uses `B,H,T,D`, FA3 uses `B,T,H,D`)
 
 ### 2. Pre-TTT stack-gap audit
@@ -120,8 +125,9 @@ Rules:
   RANK=$SLURM_PROCID
   WORLD_SIZE=$SLURM_NTASKS
   ```
-- **Launcher script:** `scripts/pegasus_optimized_launcher.sh <run_id> [script_path]`
-- **Container:** NGC 26.03 (`nvcr.io_nvidia_pytorch_26.03-py3.sqsh`), auto-detected by launcher
+- **Launcher script:** `scripts/pegasus_optimized_launcher.sh <run_id> [script_path]` for standard runs
+- **Container:** NGC 26.03 is the standard path; NGC 25.02 + FA3 wheel is the explicit FA3 experiment path
+- **FA3 note:** the current launcher auto-detects the latest NGC image, so explicit FA3 runs may need a custom `srun` path or a launcher update that pins `25.02`
 - **Data path:** `/fscratch` preferred (low-latency), `/netscratch` fallback
 - **Dependencies inside container:** `pip install sentencepiece zstandard` (launcher handles this)
 - **Logs:** `/netscratch/ayach/<run_id>.log`

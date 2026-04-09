@@ -1,5 +1,7 @@
 # Session 05c: Training Stack Bundle Prompt
 
+> Historical note (2026-03-30): this prompt has been superseded by the live `05c-plus` plan in `docs/campaign/AGENT_SYNC.md` and `docs/superpowers/plans/2026-03-30-session-05c-plus.md`. Do not follow this prompt blindly; it still assumes the pre-`05c-plus` bundle and old `05b` graduation logic.
+
 Paste everything below the line into a fresh Claude Code session. Run this AFTER Session 05b (GPTQ) results are in.
 
 ---

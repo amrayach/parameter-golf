@@ -22,22 +22,25 @@ Session 05a: Implement Flash Attention 3 (FW-1) as an isolated delta on the Sess
 - FA3 import path: `from flash_attn_interface import flash_attn_func as flash_attn_3_func`
 - FA3 tensor layout: `(B, T, H, D)` — no transposes needed after reshape
 - FA3 call: `flash_attn_3_func(q, k, v, causal=True)`
+- FA3 benchmark is already done:
+  - `26.03` SDPA flash: `1.967 ms/iter`
+  - `25.02` SDPA flash: `1.889 ms/iter`
+  - `25.02` direct FA3: `0.165 ms/iter`
+  - this is attention-kernel-only evidence, not end-to-end training speed
 
-## Pre-implementation check
+## Pre-implementation stance
 
-Before writing any code, the user needs to verify FA3 availability on Pegasus. Ask the user to run:
-```bash
-srun -p H100 --ntasks=1 --gpus-per-task=1 --cpus-per-task=6 --mem=64G --time=00:10:00 \
-  --container-image=$(ls -1 /enroot/nvcr.io_nvidia_pytorch_*.sqsh | sort -V | tail -1) \
-  bash -c 'python -c "from flash_attn_interface import flash_attn_func; print(\"FA3 OK\")"'
-```
-If FA3 is not present, try: `pip install flash-attn` inside the container.
-If neither works, stop and reassess — do not proceed without FA3 confirmed.
+- The explicit FA3 experiment path is now known:
+  - use the saved Pegasus FA3 container at `/netscratch/$USER/containers/pytorch_25.02_fa3.sqsh`
+- Do not treat the microbenchmark as proof of full training speedup.
+- The implementation must still earn promotion through a short real-training smoke and then a full `600s` run.
+- Do not use `--no-deps` against the stock `25.02` container. FA3 imports fail against the bundled PyTorch ABI.
+- Do not hide output with `| tail -1`. Use unbuffered Python instead.
 
 ## Task
 
-1. Create `records/track_non_record_16mb/2026-03-29_fw1_fa3/`
-2. Copy anchor files (train_gpt.py, requirements.txt) — no __pycache__
+1. Work in `records/track_non_record_16mb/2026-03-29_fa3_port/`
+2. Keep the delta isolated against the anchor — no unrelated code changes
 3. Apply these changes to CausalSelfAttention.forward():
    - Add import: `from flash_attn_interface import flash_attn_func as flash_attn_3_func`
    - Remove `.transpose(1, 2)` after q/k reshape (anchor lines 616-617)
@@ -48,7 +51,7 @@ If neither works, stop and reassess — do not proceed without FA3 confirmed.
    - Verify XSA still works post-swap (it operates on `(B, T, H, D)` which is FA3's native layout)
 4. Restore `enable_math_sdp(True)` to match the measured anchor state (same isolation as Delta 2)
 5. Update docstring to describe FW-1
-6. Create README.md and submission.json (flat schema matching anchor format)
+6. Keep README.md and submission.json in sync with the saved-container Pegasus path
 7. Verify with `python3 -c "import ast; ast.parse(open('train_gpt.py').read())"`
 
 ## Isolation constraint
@@ -70,9 +73,30 @@ If neither works, stop and reassess — do not proceed without FA3 confirmed.
 - Push to remote
 - Tell user to run on Pegasus:
   ```bash
-  cd /netscratch/ayach/parameter-golf && git pull
-  bash scripts/pegasus_optimized_launcher.sh fw1_fa3_8xh100 \
-    records/track_non_record_16mb/2026-03-29_fw1_fa3/train_gpt.py
+  cd /netscratch/$USER/parameter-golf && git pull
+  srun -K -p H100 --nodes=1 --ntasks=8 --gpus-per-task=1 --gpu-bind=none --cpus-per-task=6 --time=02:00:00 \
+    --container-image=/netscratch/$USER/containers/pytorch_25.02_fa3.sqsh \
+    --container-mounts=/netscratch/$USER:/netscratch/$USER,/fscratch/$USER:/fscratch/$USER \
+    --container-workdir=/netscratch/$USER/parameter-golf \
+    bash -c '
+      export LOCAL_RANK=$SLURM_LOCALID
+      export RANK=$SLURM_PROCID
+      export WORLD_SIZE=$SLURM_NTASKS
+      export PYTHONUNBUFFERED=1
+      export MKL_NUM_THREADS=1
+      export NUMEXPR_NUM_THREADS=1
+      export OMP_NUM_THREADS=1
+      export USE_OPENMP=1
+      export NCCL_IB_DISABLE=1
+      export NCCL_SOCKET_IFNAME=bond,eth
+      export NCCL_P2P_LEVEL=NVL
+      cd /netscratch/$USER/parameter-golf
+      RUN_ID=fa3_port_8xh100 \
+      DATA_PATH=/fscratch/$USER/parameter-golf-data/datasets/fineweb10B_sp1024 \
+      TOKENIZER_PATH=/fscratch/$USER/parameter-golf-data/tokenizers/fineweb_1024_bpe.model \
+      VOCAB_SIZE=1024 AMP_DTYPE=auto MAX_WALLCLOCK_SECONDS=600 VAL_LOSS_EVERY=200 TRAIN_LOG_EVERY=50 \
+      python3 -u records/track_non_record_16mb/2026-03-29_fa3_port/train_gpt.py
+    ' 2>&1 | tee /netscratch/$USER/fa3_port_8xh100.log
   ```
 
 ## Git conventions
@@ -85,17 +109,19 @@ If neither works, stop and reassess — do not proceed without FA3 confirmed.
 
 ## Pegasus conventions
 
-- NEVER use torchrun. Use `scripts/pegasus_optimized_launcher.sh`
-- salloc: `salloc -p H100 --nodes=1 --ntasks=8 --gpus-per-task=1 --gpu-bind=none --cpus-per-task=6 --mem=200G --time=1-00:00:00`
-- Container: NGC 26.03, auto-detected by launcher
+- NEVER use torchrun
+- salloc: `salloc -p H100 --nodes=1 --ntasks=8 --gpus-per-task=1 --gpu-bind=none --cpus-per-task=6 --mem=200G --time=02:00:00`
+- Standard container: NGC `26.03`
+- Explicit FA3 experiment container: saved Pegasus `25.02` FA3 container
+- Current launcher note: `scripts/pegasus_optimized_launcher.sh` still auto-detects the latest NGC image, so it is not yet the right default launcher for FW-1 unless updated to pin `25.02`
 - Data: `/fscratch` preferred
-- Logs: `/netscratch/ayach/<run_id>.log`
+- Logs: `/netscratch/$USER/<run_id>.log`
 
 ## Documentation conventions (after results come back)
 
 Update in this order:
-1. `records/track_non_record_16mb/2026-03-29_fw1_fa3/submission.json` — fill metrics
-2. `records/track_non_record_16mb/2026-03-29_fw1_fa3/README.md` — add results
+1. `records/track_non_record_16mb/2026-03-29_fa3_port/submission.json` — fill metrics
+2. `records/track_non_record_16mb/2026-03-29_fa3_port/README.md` — add results
 3. `docs/campaign/AGENT_SYNC.md` — add FW-1 measured results
 4. `docs/codex-memory/project-state.md` — update what's been demonstrated
 5. `docs/codex-memory/next-session.md` — update next action (FW-2 or stack)

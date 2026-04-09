@@ -1,132 +1,81 @@
 # Parameter Golf Campaign
 
-This directory turns the campaign plan into operator-ready assets for a 7-10 day push on the challenge.
+This directory holds the campaign runbooks, prompts, artifacts, and historical session notes for this repo.
 
-## Current Status
+## Current status
 
 For live execution state, always defer to:
+
 - `AGENTS.md`
 - `docs/campaign/AGENT_SYNC.md`
 - `CLAUDE.md`
 
-As of 2026-03-31:
-- the active mainline is compression-path feasibility on top of the measured 05c-plus fallback
-- Session 05c-plus is the best measured branch in the current family
-- Session 05f and Session 05g are measured negatives vs 05c-plus
-- GPTQ is permanently parked for this model family after the 05e export-only probe on the 05c-plus architecture
-- the next live execution step is rerunning the corrected compression probe on the saved 05c-plus / 05g artifacts
-- for exact smoke-vs-launch gating, use `docs/campaign/AGENT_SYNC.md` rather than this summary
+As of 2026-04-07:
 
-## Objective
+- the faithful RunPod `#1394` SP8192 baseline is complete and is the new stable base
+- the preserved `#1394` archive has already been fetched locally and verified
+- the strict local proof folder already exists
+- the next foreground step is faithful `#1413` on a fresh paid RunPod `8xH100 SXM` session
+- the old CPU-only recovery pod no longer contains unique `#1394` evidence and may be terminated/deleted
+- `07c1` is background evidence only
+- the old `05c-plus` / GPTQ / width-compression branch family is historical, not active
+
+## Active objective
 
 Primary goal:
-- Determine quickly whether there is a realistic path to a respectable leaderboard submission from this environment.
+
+- use the recovered `#1394` baseline as the durable proof base and move the foreground lane to faithful `#1413`
 
 Secondary goal:
-- If the answer is yes, reproduce a strong public pre-TTT stack, test a narrow set of improvements, and only then consider TTT or RFN-guided ideas.
 
-## Current read of the field
+- keep `07c1` and Pegasus-only TTT work strictly background until the SP8192 branch order is resolved
 
-As of 2026-03-30, the public leaderboard pattern is clear:
-- The biggest gains came from stacking practical wins, not from speculative new theory.
-- The strongest recurring levers are sliding-window eval, compression-aware training and export, deeper and wider models funded by compression, cheap architectural tweaks, and later TTT.
-- The current official merged #1 is PR `#1019` at `1.1147` BPB.
+## Current branch order
 
-Implication:
-- The fastest serious route is a strong non-TTT anchor first.
-- RFN is worth probing only as a sidecar until it proves signal on a tiny transformer experiment.
+- stable base: `#1394`
+- next reviewer-facing branch: `#1413`
+- later stacked frontier: `#1437`
+- component / legality ablation only: `#1420`
+- later higher-risk lane: `#1416`
 
-## Hardware stance
+## Current execution path
 
-Primary execution base:
-- Pegasus `H100` partition first.
+Use `docs/campaign/AGENT_SYNC.md` for the exact live steps.
 
-Why:
-- The Pegasus docs describe `H100` as `H100-SXM5`, 8 GPUs per node, NVSwitch-connected.
-- That is the correct class for meaningful iteration, even if final challenge verification still belongs on Runpod or equivalent.
+The current RunPod foreground flow is:
 
-Important references:
-- `@docs/Pegasus_Server_documentation.txt`
-- `@docs/dfki-nlp-pegasus-bridle-8a5edab282632443.txt`
+1. launch a fresh paid `8xH100 SXM` pod
+2. sync repo state:
+   - `git pull --ff-only`
+3. start faithful `#1413`:
+   - `bash scripts/runpod_1413.sh 0`
 
-## Session order
+The launcher handles:
 
-These session docs are historical planning assets. They are useful for lineage and rationale, but they are not the current execution source of truth. Use `AGENT_SYNC.md` for the live plan.
+- fetching `pull/1413/head`
+- checking out the exact `#1413` record folder
+- restoring SP8192 data/runtime deps
+- forcing repo-root `DATA_DIR`
+- archiving source files, metadata, logs, and final artifacts into `/workspace/pr1413_archive_*`
 
-1. `sessions/01_lineage_and_environment_audit.md`
-Preferred mode: Planning
-Goal: map the winning lineage, confirm repo mechanics, and lock the execution protocol.
+## Historical notes
 
-2. `sessions/02_pegasus_baseline_ladder.md`
-Preferred mode: Execution
-Goal: verify the Pegasus environment and reproduce the baseline ladder cheaply.
+The following materials remain useful for lineage and rationale, but they are **not** live source-of-truth docs:
 
-3. `sessions/03_pre_ttt_anchor_port.md`
-Preferred mode: Execution
-Goal: port a strong pre-TTT stack into your own non-record folder and measure how close it lands.
+- `sessions/`
+- `prompts/`
+- `docs/superpowers/plans/`
+- older campaign artifacts describing `05c-plus`, `05f`, `05g`, GPTQ rescue attempts, or compression-path gating
 
-4. `sessions/04_targeted_delta_sweep.md`
-Preferred mode: Execution
-Goal: test a narrow set of low-complexity deltas on top of the anchor.
+If any historical file disagrees with `AGENT_SYNC.md`, trust `AGENT_SYNC.md`.
 
-5. `sessions/05_ttt_correctness_audit.md`
-Preferred mode: Planning
-Goal: decide whether the TTT path is correct, legal, and worth integrating.
+## Key references
 
-6. `sessions/06_rfn_sidecar_probe.md`
-Preferred mode: Execution
-Goal: test whether RFN signals predict sensitivity better than simple baselines.
-
-7. `sessions/07_go_no_go_review.md`
-Preferred mode: Planning
-Goal: decide whether to continue the challenge or stop and redirect effort.
-
-## Gates
-
-Gate 1:
-- By session 2, baseline behavior on Pegasus must look credible in wallclock, artifact size, and post-quant `val_bpb`.
-
-Gate 2:
-- By session 3, the anchor stack should land near the public `1.123-1.128` band or reveal one concrete fixable bottleneck.
-
-Gate 3:
-- By session 4, at least one targeted delta must show believable upside.
-
-RFN gate:
-- Continue the RFN track only if its rankings beat or complement magnitude-based heuristics on a small controlled experiment.
-
-## Workflow rules for all Claude sessions
-
-- Explore first. Do not start by editing blindly.
-- Keep competitive experiments in self-contained folders under `records/track_non_record_16mb/`.
-- Always document what changed, what was measured, and what failed.
-- End each execution session with:
-  - an updated README or note,
-  - reproducibility details,
-  - a scoped git commit.
-
-## Local context worth reusing
-
-Challenge core:
-- `@README.md`
-- `@train_gpt.py`
-
-Key public records:
-- `@records/track_10min_16mb/2026-03-17_NaiveBaseline/README.md`
-- `@records/track_10min_16mb/2026-03-21_11L_XSA4_EMA_PartialRoPE_LateQAT_1.1248/README.md`
-- `@records/track_10min_16mb/2026-03-22_11L_EMA_GPTQ-lite_warmdown3500_QAT015_1.1233/README.md`
-- `@records/track_10min_16mb/2026-03-23_LeakyReLU_LegalTTT_ParallelMuon/README.md`
-
-RFN thesis and code:
-- `@docs/Abschlussarbeit_379315.pdf`
-- `@/home/amay/Work/BachExpGraph/README.md`
-- `@/home/amay/Work/BachExpGraph/src/main.py`
-- `@/home/amay/Work/BachExpGraph/src/explain.py`
-- `@/home/amay/Work/BachExpGraph/src/mlp.py`
-
-## Templates
-
-- `PROMPT_TEMPLATE.md`
-- `PEGASUS_H100_RUNBOOK.md`
-- `templates/RUN_MANIFEST_TEMPLATE.md`
-- `templates/EXPERIMENT_SUMMARY_TEMPLATE.md`
+- live campaign state: `docs/campaign/AGENT_SYNC.md`
+- append-only measured results: `docs/campaign/results_log.jsonl`
+- RunPod operational notes: `docs/campaign/RUNPOD_RUNBOOK.md`
+- Pegasus operational notes: `docs/campaign/PEGASUS_H100_RUNBOOK.md`
+- local strict proof bundle:
+  - `records/track_10min_16mb/2026-04-07_pr1394_sp8192_runpod_strict`
+- recovered archive:
+  - `artifacts/runpod_pull/pr1394_archive_2026-04-07/pr1394_archive_2026-04-07.tgz`

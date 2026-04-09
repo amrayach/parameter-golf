@@ -1,6 +1,6 @@
 # Project State
 
-Date: 2026-04-07
+Date: 2026-04-08
 
 ## Objective
 
@@ -8,7 +8,7 @@ Primary:
 
 - preserve the completed RunPod `#1394` SP8192 baseline as the new stable base
 - use the fetched local `#1394` archive and strict proof folder as the durable evidence base
-- move the foreground branch hunt to faithful `#1413`
+- move the foreground branch hunt to the measured `D` bundle and a corrected token-only `E` follow-up
 
 Secondary:
 
@@ -20,6 +20,18 @@ Secondary:
 - `05c-plus` is superseded
 - `07c` and `07c1` validated the move away from the old compression line, but they are no longer the foreground branch
 - the faithful `#1394` SP8192 RunPod baseline is now complete on `8xH100 SXM`
+- the `pr1413` RunPod batch archive is now fetched locally:
+  - `artifacts/runpod_pull/pr1413_archive_20260407_213205`
+- the canonical `D` 5-seed bundle is the new clean foreground base:
+  - seeds `0,42,1234,1337,2025`
+  - mean TTT BPB `1.08128837`
+  - sample stddev `0.00058943`
+- seed `7` is preserved as an extra sixth seed:
+  - TTT BPB `1.08167555`
+- the old eval-only `E` seed-0 run is promising but not clean evidence:
+  - `pr1413_ngram_eval_s0`
+  - TTT BPB `1.08078425`
+  - predates the public causal correction discussion around `#1420` / `#1437`
 - packaging fix is validated on the real RunPod checkpoint:
   - counted code bytes: `17,821`
   - all three completed seeds are under the 16 MB cap
@@ -43,7 +55,37 @@ Secondary:
 
 ### Best current foreground line
 
-Completed `#1394` RunPod 3-seed baseline:
+Completed local `D` RunPod bundle:
+
+- `0`
+  - sliding s64: `1.08261177`
+  - score-first TTT: `1.08093485`
+  - bytes total: `15,992,638`
+- `42`
+  - sliding s64: `1.08401205`
+  - score-first TTT: `1.08113936`
+  - bytes total: `15,990,501`
+- `1234`
+  - sliding s64: `1.08247918`
+  - score-first TTT: `1.08091630`
+  - bytes total: `15,990,023`
+- `1337`
+  - sliding s64: `1.08258969`
+  - score-first TTT: `1.08112499`
+  - bytes total: `15,989,185`
+- `2025`
+  - sliding s64: `1.08379404`
+  - score-first TTT: `1.08232635`
+  - bytes total: `15,989,883`
+
+Aggregate:
+
+- canonical 5-seed mean TTT BPB: `1.08128837`
+- canonical 5-seed sample stddev: `0.00058943`
+- all-6 mean TTT BPB: `1.08135290`
+- max bytes total: `15,994,511`
+
+Previous stable proof base remains the completed `#1394` RunPod 3-seed baseline:
 
 - `1337`
   - sliding s64: `1.08471849`
@@ -76,22 +118,24 @@ Aggregate:
 
 ## Competitive reality
 
-Open frontier references as of 2026-04-07:
+Open frontier references as of 2026-04-08:
 
 - merged official `#1019`: `1.11473509` BPB / `1.88217853` nats
 - open clean `#1394`: `1.08563`
 - open `#1412`: `1.08354`
 - open `#1413`: `1.08279`
-- open `#1420`: `1.08014`
-- open `#1416`: `1.07948`
-- open `#1437`: `1.07800`
+- open `#1420`: title now reports `1.08309`; the old `1.08014` number is no longer the clean anchor after the causal-fix discussion
+- open `#1416`: author admitted the pre-quant validation TTT issue and said they are stripping TTT
+- open `#1423`: comment thread points out direct validation fine-tuning before quantization
+- open `#1437`: `1.08091`
 
 Interpretation:
 
-- our completed `#1394` baseline is competitive with the clean SP8192 tier
-- it is about `0.00042` BPB better than the open `#1394` reference mean, on only 3 seeds instead of 5
-- it is still behind `#1413`, `#1420`, `#1416`, and `#1437`
-- the next real move is therefore `#1413`, not another `#1394` rerun and not more `07c1` polish
+- local `D` is now ahead of `#1413`, `#1460`, and the currently titled `#1420` number
+- `#1416` and `#1423` should not be treated as clean frontier anchors
+- the clean public target is the corrected `#1437` number at `1.08091`
+- the remaining gap from canonical `D` to `#1437` is only `0.00037837` BPB
+- the next real move is therefore a corrected token-only `E` / `#1437`-style follow-up on top of `D`, not a faithful `#1413` restart
 
 ## Background `07c1` state
 
@@ -135,18 +179,22 @@ Pegasus background jobs:
   - `42`: `1.08576707`
   - `2025`: `1.08513825`
 - `07c1` remains a credible background evidence line, but is clearly behind the SP8192 frontier family
+- local frontier review no longer has to be fully manual:
+  - `scripts/sync_pr_frontier.py` now syncs `openai/parameter-golf` PR metadata through `gh`, stores a normalized JSON cache under `artifacts/gh_frontier/`, and writes a sortable CSV for score-first or campaign-relevance views
 
 ## What remains unresolved
 
-- whether `#1413` reproduces cleanly on the same RunPod lane
-- whether `#1437` should be climbed only after `#1413` or whether one later direct reproduction is worth it
+- whether a corrected token-only `E`-style layer on top of `D` holds enough of the old seed-0 gain to beat `#1437`
+- whether export-only GPTQ refinements (CDQuant / OWC) produce any measurable gain at all over plain `D`
+- whether eval-only TTT refinements (optimizer / freeze policy) produce any measurable gain at all over plain `D`
+- whether one training-split-only Fisher / `(g*w)^2` guided export policy produces anything after the checkpoint-reuse levers are exhausted
+- whether the current local prep folders should be regenerated from the corrected public `#1437` code before the next pod session
 - whether repaired `07c1` TTT is positive enough to matter strategically at all
-- which originality lane to open once the `#1413` question is answered
-- what to do only after the first faithful `#1413` seed-0 result is in hand
+- which originality lane to open only after the corrected `E` seed-0 and Fisher sidecar are both measured
 
 ## Best next move
 
-**Strategy pivot (2026-04-07):** Instead of launching only one faithful `#1413` seed, the A/B/C/D/E offline experiment suite is now prepared for one-shot batch execution.
+**Strategy pivot (2026-04-08):** The old A/B/C/D/E batch is no longer the next launch plan as-written. The next launch plan is a corrected, token-only, reviewer-defensible `E`-style attack on top of the measured `D` base, followed by checkpoint-reuse sidecars before any retraining.
 
 Prepared artifacts (ready locally, pushed to git):
 
@@ -157,11 +205,18 @@ Prepared artifacts (ready locally, pushed to git):
 
 On the next paid RunPod `8xH100 SXM` pod:
 
-1. `git pull --ff-only` to sync the prepared folders
-2. `bash scripts/runpod_1413_batch.sh 0` to run A/B/C/D/E in sequence
-3. Run E requires the D checkpoint — the batch runner enforces this automatically
-4. Terminate/delete the old CPU-only recovery pod when convenient
-5. Keep Pegasus `07c1` TTT jobs in the background only
+1. `git pull --ff-only` to sync the corrected branch
+2. regenerate or patch the eval-time n-gram path so it matches the public causal correction (`#1437`-style token-only mode)
+3. use the preserved `final_model.pt` checkpoints from the `D` archive for sidecars that do not require retraining
+4. prepare export-only GPTQ refinements (CDQuant / OWC)
+5. prepare eval-only TTT refinements (for example optimizer / freeze-policy changes)
+6. start from the existing `D` stack, not a faithful `#1413` control rerun
+7. run seed-0 proofs first:
+   - corrected `E`
+   - export-only GPTQ refinement
+   - eval-only TTT refinement
+8. only expand to the canonical seed pack `0,42,1234,1337,2025` if one of the seed-0 runs clearly beats plain `D`
+9. keep Pegasus `07c1` TTT jobs in the background only
 
 Remaining offline blockers:
 

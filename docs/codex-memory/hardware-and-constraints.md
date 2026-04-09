@@ -3,72 +3,67 @@
 ## Challenge constraints
 
 - train in under `10 minutes` on `8xH100 SXM`
+- evaluate in under `10 minutes`
 - artifact under `16,000,000` bytes total
 - final metric is `val_bpb`
-- official leaderboard entry is record-gated: must beat the current official SOTA by at least `0.005` nats with enough logs for `p < 0.01`
-
-## Pegasus verified state
-
-- `H100` allocation works for `1xH100`
-- `8xH100` single-node allocation works
-- `8xH100` NCCL works under Slurm-native `srun`
-- `torchrun --standalone` is currently not the correct launcher for Pegasus `8xH100`
-- NGC 26.03 container confirmed working on Pegasus
-- Saved FA3 container confirmed at `/netscratch/$USER/containers/pytorch_25.02_fa3.sqsh`
-- Stock NGC `25.02` + `--no-deps` FA3 install fails with `undefined symbol: aoti_torch_abi_version`
-- `1xH100` FA3 smoke trains stably at about `640 ms/step` after warmup
-- `8xH100` FA3 on the saved `25.02` container is slower than the SDPA anchor (`92.67 ms` vs `91.37 ms`)
-- Challenge-shaped `8xH100` or `8xH200` runs must include `--nodes=1`
-- `/fscratch` confirmed as optimized data staging path (avoids `/netscratch` I/O bottlenecks)
+- official record claims are gated by the merged official baseline in **nats**, with enough logs for `p < 0.01`
 
 ## Current measured anchors
 
-- `1xA100` root baseline: `1.37140771`
-- `1xH100` root baseline: `1.30594735`
-- `8xH100` root baseline: `1.23368511`
-- `8xH100` Session 03 anchor (sliding s64): `1.12904446`
-- `8xH100` Session 03 anchor (int6 roundtrip): `1.15247273`
+### Foreground SP8192 base
 
-## Artifact pressure
+- faithful RunPod `#1394` baseline on `8xH100 SXM`
+  - `1337`: sliding `1.08471849`, roundtrip `1.10134414`, bytes `15,986,188`
+  - `42`: sliding `1.08576707`, roundtrip `1.10263175`, bytes `15,987,537`
+  - `2025`: sliding `1.08513825`, roundtrip `1.10167670`, bytes `15,986,526`
+  - mean sliding `1.08520794`
 
-- `8xH100` root baseline artifact: `15871532` bytes
-- `8xH100` Session 03 int6+zstd artifact: `15751324` bytes (model `15692752` + code `58572`)
-- remaining headroom under cap: `248676` bytes
-- size discipline is now important for any competition-phase change
-- GPTQ-lite clip search INCREASES artifact size to `16219752` bytes — OVER the `16000000` cap by `219752` bytes
-- GPTQ-lite is NOT a viable export path: it hurts zstd compressibility more than it helps quantization quality
-- Anchor int6+zstd with fixed row-max remains the viable export path
+### Background `07c1` evidence
 
-## RunPod
+- strict RunPod `07c1` best seed:
+  - `1.10894203` sliding BPB
+  - `1.11863096` roundtrip BPB
+  - `1.87233216` nats
+  - `15,728,840` bytes
 
-- reserve for final validation only unless external credits are granted
+## Pegasus state
 
-## Current phase
+- Pegasus remains the canonical validator and the background TTT lane.
+- There is not currently a clean immediate single-node `8xH100` block free for this foreground step.
+- `torchrun --standalone` is not the right launcher on Pegasus multi-GPU; use Slurm-native `srun`.
+- Latest checked `07c1` Pegasus TTT reruns:
+  - `2740306`: `FAILED`
+  - `2740307`: `FAILED`
 
-- **Session 05c-plus is the current best measured branch**
-- Session 05f and Session 05g are measured negatives vs 05c-plus
-- Infrastructure uncertainty is no longer the blocker
-- Current blocker is compression-path feasibility for the next larger fork
-- GPTQ is parked (7 ablations, code correct, failure model-specific)
-- FA3 is parked (ABI issue with NGC container)
-- SWA is excluded (dead code in reference PRs)
-- Checkpoint diagnostics are now part of the mainline workflow:
-  - `python scripts/diagnostics/diagnose_weights.py final_model.pt`
-  - `python scripts/diagnostics/diagnose_weights.py final_model.pt final_model.int6.ptz`
-- Compression feasibility is now part of the mainline workflow:
-  - `python scripts/diagnostics/compress_probe.py diagnostics/2026-03-31_05c_plus/final_model.int6.ptz`
-- RunPod $25 credits reserved for one decisive 8xH100 run after Pegasus diagnostics and branch selection are settled
+## RunPod state
+
+- RunPod is the foreground execution lane for SP8192 reproductions when credits are available.
+- The `#1394` recovery archive is already fetched locally and verified.
+- The old CPU-only recovery pod no longer holds unique artifacts and may be terminated/deleted.
+- The next paid RunPod session should be a fresh `8xH100 SXM` pod for faithful `#1413`.
+- The live pod-side launcher is:
+  - `scripts/runpod_1413.sh`
+
+## Persistence / recovery rules
+
+- For the migration/recovery pod shape, `/workspace` was the persistence boundary; `/root` was not reliable across `Stop`.
+- Direct TCP SSH forwarding can still refuse connections even when `sshd` is listening inside the pod.
+- The successful `#1394` recovery path was a PTY-driven gateway shell with local base64 capture and checksum verification.
+- Archive recovery is now complete; do not spend more paid time on it.
+
+## Artifact discipline
+
+- Packaging fix is validated on the real RunPod checkpoint:
+  - counted code bytes `17,821`
+- All three completed `#1394` foreground seeds are under the 16 MB cap.
+- Exact `2025` binaries are preserved locally.
+- Exact `1337` and `42` binaries are not preserved because they were already overwritten before the archive was made.
 
 ## Practical rules
 
-- Do not hide Pegasus job output with `| tail -1`; use unbuffered Python instead
-- The saved-container FA3 runtime is a measured negative result; do not rerun as a throughput candidate
-- Future FA3 work requires a vendor-tuned NGC runtime, not the current pip-replaced stack
-- GPTQ-lite clip search confirmed as NOT helpful
-- Current measured export candidate:
-  - `custom-shuffle + brotli-10` on saved 05c-plus / 05g artifacts
-  - byte-shuffle contributes only `~8-10 KB`; custom serialization + brotli is the dominant gain
-- Attention microbenchmark (kernel-only, not full training throughput):
-  - `26.03` SDPA flash: `1.967 ms/iter`
-  - `25.02` SDPA flash: `1.889 ms/iter`
-  - `25.02` direct FA3: `0.165 ms/iter`
+- Use a fresh H100 pod for the next `#1413` step rather than trying to reuse or migrate the old CPU-only recovery pod.
+- Start the next paid session with:
+  - `git pull --ff-only`
+  - `bash scripts/runpod_1413.sh 0`
+- Keep `07c1` as background evidence only.
+- Treat `05c-plus`, GPTQ, and the old width/compression branch family as archival, not active.

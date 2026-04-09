@@ -1,5 +1,7 @@
 # Plan: Full Hessian GPTQ (Session 05b)
 
+> Historical note (2026-03-30): this plan reflects the original Session 05b mainline before the GPTQ branch was parked on the current anchor. Use it as a record of the failed branch, not as the current execution source of truth.
+
 ## Context
 
 The Session 03 anchor loses **0.00775 BPB** from pre-quant EMA (1.14472) to roundtrip (1.15247) due to naive per-row int6 quantization. Full Hessian GPTQ replaces this with Cholesky-based error compensation that weights quantization errors by their downstream impact. The referenced competitive PRs (#634, #1019, #1060, #1072) all implement variants of the GPTQ family; the exact decomposition/order will be verified against the PR diffs before coding. This is the single highest-impact isolated delta available — it changes only the post-training export path, zero risk to training convergence.

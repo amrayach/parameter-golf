@@ -64,10 +64,66 @@ Remaining decisions deferred until first pod result is in hand:
 ## SP8192 branch priority
 
 - The live clean / reviewer-facing branch order remains:
-  - `#1394`
-  - `#1413`
-  - `#1437`
-- Treat SLOT as out of mainline scope until the legality picture is explicit.
+  - preserved proof base: `#1394`
+  - measured clean foreground base: local canonical `D`
+  - next attack: corrected token-only `E` / `#1437`-style eval-time tilt
+- Treat SLOT and pre-quant validation fine-tuning as out of mainline scope.
+
+## Frontier reinterpretation (2026-04-08)
+
+Decision: reinterpret the `pr1413` RunPod batch results around the measured `D` bundle, not around a future faithful `#1413` restart.
+
+Rationale:
+
+- local `D` now has a canonical 5-seed mean of `1.08128837`, which is already ahead of the currently titled `#1420` number (`1.08309`) and ahead of `#1413` / `#1460`
+- `#1416` is no longer a clean anchor after the author admitted the pre-quant validation TTT issue
+- `#1423` is no longer a clean anchor after the comment thread pointed out direct validation fine-tuning before quantization
+- the clean public target is now the corrected `#1437` number (`1.08091`), only `0.00037837` BPB ahead of local `D`
+- the old `E` seed-0 gain is interesting, but that run predates the causal correction discussion and should not be treated as clean evidence
+
+Operational consequence:
+
+- do not spend the next paid H100 session on a faithful `#1413` replay
+- spend it on a causally corrected, token-only, clearly auditable `E`-style eval-time n-gram layer on top of the existing `D` stack
+
+## RFN direction triage (2026-04-08, post-Feynman)
+
+Decision: kill full RFN / attribution-graph work as a competition-critical path. Treat Fisher / gradient-sensitivity-guided export as an optional sidecar, not the mainline.
+
+Rationale:
+
+- Feynman `compare` preferred Fisher / gradient sensitivity over RFN-lite and full attribution graphs, but only inside the RFN-derived option set
+- Feynman `deepresearch` concluded the highest-EV competition path is still the corrected standard `E` path, with Fisher / Hessian sensitivity as an optional 2-day side experiment
+- the literature review on sensitivity-guided compression found real prior art (GPTQ, AWQ, HAWQ, ECQx, Taylor/Fisher pruning), so this is not a thesis-exclusive novelty claim
+- the literature review on tiny-transformer BPB improvements found only small quantization deltas at int6 scale; these are stackable refinements, not a replacement for the `E` attack
+- the thesis-to-transformer RFN bridge remains a research problem, not an engineering task suitable for the April 30 deadline
+
+Operational consequence:
+
+- primary path: corrected token-only `E` on top of `D`
+- secondary path: implement training-split-only Fisher / `(g*w)^2` sensitivity extraction and test one guided export policy
+- defer block-level RFN-lite unless the sidecar wins and there is slack left before the deadline
+- reject any “target-data calibration” idea that would consume validation/eval tokens before scoring; keep all calibration on the training side only
+
+## Post-literature reprioritization (2026-04-08, code-grounded)
+
+Decision: move export-only and eval-only `D`-checkpoint sidecars ahead of both Fisher and training-side optimizer work.
+
+Rationale:
+
+- the preserved `pr1413_archive_20260407_213205` bundle contains `final_model.pt` for the `D` runs, so export-only and eval-only experiments can be tested on the real measured checkpoints without paying for retraining first
+- the current codebase already uses `torch.compile` in the active training / eval path and uses SGD+momentum for TTT, so some of Claude's proposed "missing" interventions are either already partly present or aimed at the wrong baseline
+- CDQuant / OWC attack the current GPTQ export path directly
+- RMS+decay / middle-layer-only TTT attack the current legal TTT path directly
+- Cautious Muon and AdaMuon-style training changes remain interesting, but they require retraining and therefore sit behind the cheaper checkpoint-reuse levers
+
+Operational consequence:
+
+- first: corrected token-only `E` on top of `D`
+- second: export-only GPTQ refinements (CDQuant / OWC) using preserved `final_model.pt`
+- third: eval-only TTT refinements (optimizer / freeze policy) using preserved `final_model.pt`
+- fourth: only then consider training-side optimizer variants such as Cautious Muon
+- Fisher is now a later diagnostic / sidecar, not an immediate next action
 
 ## RunPod workflow
 

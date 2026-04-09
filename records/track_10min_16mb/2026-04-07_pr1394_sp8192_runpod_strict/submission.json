@@ -1,0 +1,10 @@
+{
+  "author": "amay",
+  "github_id": "amrayach",
+  "name": "Faithful PR #1394 SP8192 RunPod Strict Proof",
+  "blurb": "Faithful PR #1394 SP8192 reproduction on RunPod 8xH100 SXM, using the best claimed seed (1337): 1.08471849 BPB / 2.80194051 nats / 15,986,188 bytes. Current bundle summarizes 3 strict seed run(s) with mean sliding BPB 1.08520794 and max artifact 15,987,537 bytes.",
+  "date": "2026-04-07",
+  "val_loss": 2.80194051,
+  "val_bpb": 1.08471849,
+  "bytes_total": 15986188
+}

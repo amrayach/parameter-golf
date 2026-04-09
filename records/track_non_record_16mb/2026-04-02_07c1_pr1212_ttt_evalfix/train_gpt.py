@@ -1532,6 +1532,9 @@ def eval_val_sliding_ttt(
          f"frozen={sum(p.numel() for p in base_model.parameters() if not p.requires_grad)}")
 
     optimizer = torch.optim.SGD(ttt_params, lr=args.ttt_lr, momentum=args.ttt_momentum)
+    use_dist = world_size > 1 and dist.is_available() and dist.is_initialized()
+    if use_dist:
+        log0("ttt_sliding:train_mode rank0_only_broadcast")
     t0 = time.perf_counter()
 
     for ci in range(num_chunks):
@@ -1587,30 +1590,26 @@ def eval_val_sliding_ttt(
                 cos_lr = args.ttt_lr * 0.5 * (1.0 + math.cos(math.pi * ci / max(num_chunks - 1, 1)))
                 for pg in optimizer.param_groups:
                     pg['lr'] = cos_lr
-                my_seq_s = (chunk_seqs * rank) // world_size
-                my_seq_e = (chunk_seqs * (rank + 1)) // world_size
-                my_chunk_seqs = my_seq_e - my_seq_s
-                for _ep in range(args.ttt_epochs):
-                    for bs in range(0, my_chunk_seqs, args.ttt_batch_seqs):
-                        be = min(bs + args.ttt_batch_seqs, my_chunk_seqs)
-                        actual_bs = my_seq_s + bs
-                        start_tok = chunk_start + actual_bs * seq_len
-                        end_tok = chunk_start + (my_seq_s + be) * seq_len + 1
-                        if end_tok > val_tokens.numel():
-                            continue
-                        local = val_tokens[start_tok:end_tok].to(device=device, dtype=torch.int64)
-                        x = local[:-1].reshape(-1, seq_len)
-                        y = local[1:].reshape(-1, seq_len)
-                        optimizer.zero_grad(set_to_none=True)
-                        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                            loss = base_model(x, y)
-                        loss.backward()
-                        if world_size > 1:
-                            for p in ttt_params:
-                                if p.grad is not None:
-                                    dist.all_reduce(p.grad, op=dist.ReduceOp.AVG)
-                        torch.nn.utils.clip_grad_norm_(ttt_params, args.ttt_grad_clip)
-                        optimizer.step()
+                if not use_dist or rank == 0:
+                    for _ep in range(args.ttt_epochs):
+                        for bs in range(0, chunk_seqs, args.ttt_batch_seqs):
+                            be = min(bs + args.ttt_batch_seqs, chunk_seqs)
+                            start_tok = chunk_start + bs * seq_len
+                            end_tok = chunk_start + be * seq_len + 1
+                            if end_tok > val_tokens.numel():
+                                continue
+                            local = val_tokens[start_tok:end_tok].to(device=device, dtype=torch.int64)
+                            x = local[:-1].reshape(-1, seq_len)
+                            y = local[1:].reshape(-1, seq_len)
+                            optimizer.zero_grad(set_to_none=True)
+                            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                                loss = base_model(x, y)
+                            loss.backward()
+                            torch.nn.utils.clip_grad_norm_(ttt_params, args.ttt_grad_clip)
+                            optimizer.step()
+                if use_dist:
+                    for p in ttt_params:
+                        dist.broadcast(p.data, src=0)
 
         if rank == 0 and (ci % 10 == 0 or ci == num_chunks - 1):
             elapsed = time.perf_counter() - t0
@@ -2147,10 +2146,10 @@ def main() -> None:
     global _LEAKY_SLOPE
     _LEAKY_SLOPE = args.leaky_slope
     # zeropower_via_newtonschulz5 runs eagerly with bmm -- do NOT compile
-    distributed = "RANK" in os.environ and "WORLD_SIZE" in os.environ
     rank = int(os.environ.get("RANK", "0"))
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    distributed = world_size > 1
     if world_size <= 0:
         raise ValueError(f"WORLD_SIZE must be positive, got {world_size}")
     if 8 % world_size != 0:
@@ -2163,7 +2162,11 @@ def main() -> None:
         args.train_seq_len = _local_sl
         args.train_batch_tokens = args.local_seqs_per_gpu * _local_sl * grad_accum_steps * world_size
         if rank == 0:
-            log0(f"local_batch: {args.local_seqs_per_gpu} seqs x {_local_sl} tokens/seq x {grad_accum_steps} accum x {world_size} gpus = {args.train_batch_tokens} global tokens")
+            print(
+                f"local_batch: {args.local_seqs_per_gpu} seqs x {_local_sl} tokens/seq x "
+                f"{grad_accum_steps} accum x {world_size} gpus = {args.train_batch_tokens} global tokens",
+                flush=True,
+            )
     # Mixed seq_len: each GPU uses a different seq_len, tokens balanced by speed
     MS_PER_STEP_LUT = {256: 158.1, 512: 168.9, 768: 178.6, 1024: 189.9,
                        1536: 211.5, 2048: 233.9, 3072: 276.8, 4096: 321.2}

@@ -17,6 +17,10 @@ diagnostic state survives future training runs.
   - float-vs-int6 comparison on the same checkpoint
 - `scripts/diagnostics/compress_probe.py`
   - export-path feasibility probe for saved `.int6.ptz` artifacts
+- `scripts/diagnostics/int5_tolerance_probe.py`
+  - mixed int5/int6 feasibility probe for width expansion
+  - measures real compressed savings under custom+brotli-10
+  - reports theoretical bit-packing savings separately
 
 ## Typical commands
 

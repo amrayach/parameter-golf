@@ -49,10 +49,19 @@ The 8ms gap is a cross-record observation. The per-contributor split is hypothes
 
 **Why**: It is architecturally independent of Parameter Banking and Parallel Muon. The 2026-03-22 record proves it works in our CastedLinear/DDP/standard-Muon architecture at ~84ms/step.
 
-**Portability on NGC 26.03**:
-- Import: `from flash_attn_interface import flash_attn_func as flash_attn_3_func`
-- Must verify in-container. If `flash_attn_interface` is absent, `pip install flash-attn>=2.7` in the launcher.
-- Verification: `python -c "from flash_attn_interface import flash_attn_func; print('FA3 OK')"`
+**Follow-up benchmark result** (`scripts/bench_fa3_vs_sdpa.py`, single H100, isolated attention kernel):
+
+- NGC `26.03`: SDPA flash `1.967 ms/iter`
+- NGC `25.02` + installed `flash_attn_3` wheel:
+  - SDPA flash `1.889 ms/iter`
+  - direct FA3 `0.165 ms/iter`
+  - relative kernel speedup: `11.44x`
+
+This benchmark is enough to justify an isolated FA3 training delta, but it is **not** an end-to-end training throughput measurement.
+
+**Container stance after benchmark**:
+- NGC `26.03` remains the standard stable container path for ordinary runs
+- NGC `25.02` + installed FA3 wheel is the current explicit-FA3 experiment path
 
 **Tensor layout change** (anchor `CausalSelfAttention.forward`, lines 616-634):
 
@@ -66,7 +75,7 @@ The 8ms gap is a cross-record observation. The per-contributor split is hypothes
 
 ### Throughput Impact
 
-Unknown until measured. If FA3 brings step_avg from 91.37ms to ~85ms, that yields ~7059 steps (+495, ~7.5% more training data). The BPB effect depends on the loss curve slope at step ~6500, which is not known precisely.
+Unknown until measured in the full anchor loop. The microbenchmark strongly favors direct FA3 at the kernel level, but the real training-step effect still depends on projection layers, RoPE, optimizer cost, DDP, and backward pass overhead. A smoke run must measure actual `step_avg` before stronger claims.
 
 ---
 
@@ -82,9 +91,9 @@ All features below are present in the 2026-03-22 record and confirmed compatible
 - **Confidence in benefit**: HIGH (throughput), magnitude UNKNOWN
 - **Effort**: 2-4 hours
 - **Artifact impact**: None
-- **Risk**: MEDIUM (container availability)
+- **Risk**: MEDIUM (experiment container and launcher path)
 - **Dependencies**: None
-- **Gate**: Verify `flash_attn_interface` on NGC 26.03 before starting
+- **Gate**: use the measured benchmark-backed FA3 experiment path; do not assume the kernel-only speedup transfers directly to training
 
 #### FW-2: Value Embedding (VE128, Layers 9-10)
 
@@ -248,13 +257,14 @@ Estimated 4-6 hours to integrate and validate:
 
 | Step | Change | Gate |
 |---|---|---|
-| **0** | Verify FA3 on NGC 26.03 container | `python -c "from flash_attn_interface import flash_attn_func"` |
-| **1** | FA3 isolated delta (Delta 3) | Step 0 passes |
-| **2** | VE128 isolated delta (Delta 4) | FA3 is positive or neutral-but-faster |
-| **3** | Stack winners, measure combined | Steps 1-2 measured |
-| **4** | Warmdown 3500 + SWA + Late QAT | Sequential isolated deltas or stacked |
-| **5** | LeakyReLU² re-test | After FA3 integrated (throughput-coupling test) |
-| **6** | TTT integration | On stacked first-wave base with measured pre-TTT BPB |
+| **0** | Implement FA3 isolated delta (Session 05 FW-1) | Use `25.02` + installed FA3 wheel path |
+| **1** | Run short Pegasus smoke to measure actual `step_avg` and stability | FW-1 code compiles and launches |
+| **2** | Full `600s` FA3 run | Smoke is healthy |
+| **3** | VE128 isolated delta | FA3 is positive or neutral-but-faster |
+| **4** | Stack winners, measure combined | Steps 0-3 measured |
+| **5** | Warmdown 3500 + SWA + Late QAT | Sequential isolated deltas or stacked |
+| **6** | LeakyReLU² re-test | After FA3 integrated (throughput-coupling test) |
+| **7** | TTT integration | On stacked first-wave base with measured pre-TTT BPB |
 
 ### Scenario Analysis
 

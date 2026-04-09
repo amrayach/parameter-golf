@@ -13,6 +13,20 @@
 set -euo pipefail
 HOST_USER="${HOST_USER:-$USER}"
 cd /netscratch/$HOST_USER/parameter-golf
+PYTHON_DEPS="/netscratch/$HOST_USER/parameter-golf/.deps/py312"
+mkdir -p "$PYTHON_DEPS"
+
+srun --ntasks=1 \
+  --container-image="/netscratch/$HOST_USER/containers/pytorch_25.02_fa3.sqsh" \
+  --container-mounts="/netscratch/$HOST_USER/parameter-golf:/netscratch/$HOST_USER/parameter-golf,/fscratch/$HOST_USER:/fscratch/$HOST_USER" \
+  --container-workdir="/netscratch/$HOST_USER/parameter-golf" \
+  bash -lc "
+set -euo pipefail
+export PIP_ROOT_USER_ACTION=ignore
+export PYTHONPATH=\"$PYTHON_DEPS\${PYTHONPATH:+:\$PYTHONPATH}\"
+python -c 'import sentencepiece, brotli' 2>/dev/null || pip install --quiet --target \"$PYTHON_DEPS\" sentencepiece brotli
+python -c 'import sentencepiece, brotli'
+"
 
 srun --kill-on-bad-exit=1 \
   --container-image="/netscratch/$HOST_USER/containers/pytorch_25.02_fa3.sqsh" \
@@ -24,8 +38,8 @@ export PYTHONUNBUFFERED=1
 export MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 OMP_NUM_THREADS=1
 export NCCL_IB_DISABLE=1 NCCL_SOCKET_IFNAME=bond,eth NCCL_P2P_LEVEL=NVL
 export PIP_ROOT_USER_ACTION=ignore
-
-pip install --quiet sentencepiece brotli
+export PYTHONPATH=/netscratch/$HOST_USER/parameter-golf/.deps/py312${PYTHONPATH:+:$PYTHONPATH}
+python -c "import sentencepiece, brotli"
 
 DATA_PATH=/fscratch/ayach/parameter-golf-data/datasets/fineweb10B_sp1024 \
 TOKENIZER_PATH=/fscratch/ayach/parameter-golf-data/tokenizers/fineweb_1024_bpe.model \

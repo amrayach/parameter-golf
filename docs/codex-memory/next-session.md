@@ -2,25 +2,36 @@
 
 ## Phase
 
-**The strict RunPod `#1394` SP8192 baseline is complete for three seeds, the preserved archive has been fetched locally and checksum-verified, and the local strict proof folder now exists.**
+**The strict RunPod `#1394` SP8192 baseline is complete for three seeds, the `pr1413` RunPod archive is fetched locally, and the canonical local `D` bundle is now the clean foreground base.**
 
-**Strategy pivot (2026-04-07):** The foreground plan is no longer "run one faithful `#1413` seed next."  It is now: run the full A/B/C/D/E experiment suite from pre-built offline folders on the next paid RunPod pod.  The local variant folders are ready.
+**Strategy pivot (2026-04-08):** The foreground plan is no longer "run the old A/B/C/D/E batch as prepared." It is now: use the measured `D` stack as the launch point and run a corrected, token-only, reviewer-defensible `E` / `#1437`-style eval-time n-gram layer on top of it.
 
 The old `07c1` foreground story is closed. `07c1` is now background evidence only.
 
 ## Immediate next action
 
+0. Refresh the local PR frontier cache before doing manual leaderboard review:
+   - `python3 scripts/sync_pr_frontier.py sync`
+   - cache: `artifacts/gh_frontier/openai_parameter-golf_pr_cache.json`
+   - ranked CSV: `artifacts/gh_frontier/openai_parameter-golf_pr_ranked__combined__open.csv`
 1. Launch a fresh paid RunPod `8xH100 SXM` session.
 2. Sync repo state:
    - `git pull --ff-only`
-3. Run the A/B/C/D/E suite on seed `0`:
-   - `bash scripts/runpod_1413_batch.sh 0`
-   - Or individual runs: `bash scripts/runpod_1413_batch.sh 0 A B C`
-4. The batch runner uses `FETCH_PAYLOAD=0` — no on-pod git fetch of upstream code needed.
-5. Archive provenance for each run is written to `/workspace/pr1413_archive_<stamp>/seed<N>/`.
-6. Run E requires the D checkpoint — the batch runner checks for it and exits clearly if missing.
-7. The old CPU-only recovery pod may be terminated/deleted; it is no longer needed for `#1394` preservation.
-8. Keep `07c1` in the background only:
+3. Regenerate or patch the eval-time n-gram path so it matches the corrected public `#1437` token-only causal mode.
+4. Start from the local `D` stack, not from a faithful `#1413` control rerun.
+5. Reuse the preserved `final_model.pt` checkpoints from the `D` archive before introducing any retraining-side changes.
+6. Prepare export-only GPTQ refinements (CDQuant / OWC).
+7. Prepare eval-only TTT refinements (optimizer / freeze policy).
+8. Run seed-0 proofs first:
+   - corrected `E`
+   - export-only GPTQ refinement
+   - eval-only TTT refinement
+9. Only expand to the canonical seed pack `0,42,1234,1337,2025` if one of those beats plain `D`.
+10. Treat the old `pr1413_ngram_eval_s0` result only as an idea signal:
+   - `1.08078425`
+   - do not treat it as clean evidence because it predates the public causal-correction discussion
+11. The old CPU-only recovery pod may be terminated/deleted; it is no longer needed for `#1394` preservation.
+12. Keep `07c1` in the background only:
    - `2740306` and `2740307` last checked as `FAILED`
 
 ## Prepared local folders
@@ -34,17 +45,17 @@ Builder: `python3 scripts/prepare_pr1413_variants.py --force` (re-materializes b
 
 ## Current best measured result
 
-Completed `#1394` RunPod 3-seed baseline:
+Completed local `D` RunPod 5-seed canonical bundle:
 
-- `1337`: `1.08471849` sliding BPB, `1.10134414` roundtrip BPB, `15,986,188` bytes
-- `42`: `1.08576707` sliding BPB, `1.10263175` roundtrip BPB, `15,987,537` bytes
-- `2025`: `1.08513825` sliding BPB, `1.10167670` roundtrip BPB, `15,986,526` bytes
+- seeds `0,42,1234,1337,2025`
+- mean score-first TTT BPB: `1.08128837`
+- sample stddev: `0.00058943`
+- max artifact: `15,992,638` bytes
 
-3-seed summary:
+Additional sixth seed:
 
-- mean sliding BPB: `1.08520794`
-- mean roundtrip BPB: `1.10188420`
-- max artifact: `15,987,537` bytes
+- `7`: `1.08167555`
+- all-6 mean: `1.08135290`
 
 ## Locked findings
 
@@ -60,12 +71,11 @@ Completed `#1394` RunPod 3-seed baseline:
 - exact `2025` checkpoint is preserved; exact `1337` and `42` binaries are not
 - archive recovery succeeded through the gateway PTY path; direct TCP forwarding was still refusing during recovery
 - `07c1` remains useful evidence, but it is not the foreground branch anymore
-- current open frontier order remains:
-  - `#1394` clean base
-  - `#1413` legal score-first TTT
-  - `#1437` stacked frontier
-  - `#1420` as component / legality ablation
-  - `#1416` only later if needed
+- clean open frontier order now reads:
+  - local canonical `D`
+  - corrected `#1437`
+  - `#1420` only as a causal-bug / ablation reference
+  - `#1416` / `#1423` are no longer clean anchors
 
 ## Files to read first
 

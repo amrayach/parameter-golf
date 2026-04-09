@@ -25,10 +25,13 @@ The private Codex mirror is for fast reloading in future Codex sessions and to k
 - `project-state.md` — current campaign state
 - `decisions.md` — locked decisions and constraints
 - `next-session.md` — exact next action after context reset
+- `session-handoff.md` — current short-form handoff summary
 - `leaderboard-techniques.md` — distilled competitive findings
 - `hardware-and-constraints.md` — Pegasus, RunPod, and scheduling realities
 - `rfn-and-attribution-assessment.md` — RFN judgment and attribution-graph update
 - `sync-codex-memory.sh` — copy these notes into `~/.codex/memories/parameter-golf/`
+
+Historical planning docs and older prompts may remain in the repo for lineage, but the live context should come from the files above plus `docs/campaign/AGENT_SYNC.md`.
 
 ## Basic Memory MCP status
 
@@ -38,15 +41,25 @@ This Codex environment now has a global `basic-memory` MCP server configured for
 parameter-golf-codex
 ```
 
-The configured command is:
+The configured command was originally:
 
 ```bash
 codex mcp add basic-memory bash -c "uvx basic-memory mcp --project parameter-golf-codex"
 ```
 
+Current fix:
+- Codex now launches Basic Memory through a wrapper at
+  `/home/amay/.codex/memories/parameter-golf/basic-memory-mcp.sh`
+- the wrapper bypasses `uvx` and executes the cached `basic-memory` binary directly
+- runtime state lives under
+  `/home/amay/.codex/memories/parameter-golf/.basic-memory-runtime/`
+- this avoids sandbox failures from `uvx` writes under `~/.cache/uv` and `~/.local/share/uv`
+- the configured project is `parameter-golf-codex` and points at
+  `~/.codex/memories/parameter-golf/`
+
 Notes:
 - it modifies `~/.codex/config.toml`
-- it may need network access on first use to fetch the package through `uvx`
+- if the cached `basic-memory` package is removed, the wrapper will fail until it is reinstalled
 - the Markdown memory pack still works even if the MCP server is temporarily unavailable
 
 ## Fresh-session instruction

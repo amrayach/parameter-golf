@@ -109,6 +109,7 @@ class Hyperparameters:
     adam_wd = 0.04
     ema_decay = 0.997
     eval_stride = int(os.environ.get("EVAL_STRIDE", 128))
+    eval_also_stride64 = env_flag("EVAL_ALSO_STRIDE64", False)
 
     bigram_vocab_size = int(os.environ.get("BIGRAM_VOCAB_SIZE", 5120))
     bigram_dim = 128
@@ -1812,6 +1813,7 @@ def main() -> None:
         f"attention_mode:gqa num_heads:{args.num_heads} num_kv_heads:{args.num_kv_heads} "
         f"window_size:{args.window_size} window_layers:{args.window_attn_layers or 'none'}"
     )
+    log0(f"eval_also_stride64:{args.eval_also_stride64}")
     log0(
         f"tie_embeddings:{args.tie_embeddings} embed_lr:{token_lr} "
         f"head_lr:{args.head_lr if base_model.lm_head is not None else 0.0} "
@@ -2140,7 +2142,7 @@ def main() -> None:
             sw64_val_loss, sw64_val_bpb = sw_val_loss, sw_val_bpb
             log0(f"final_int6_sliding_window_s64_exact val_loss:{sw64_val_loss:.8f} val_bpb:{sw64_val_bpb:.8f}")
 
-    if args.eval_stride > 0 and args.eval_stride != 64 and 64 < sw_seq_len:
+    if args.eval_also_stride64 and args.eval_stride > 0 and args.eval_stride != 64 and 64 < sw_seq_len:
         sync_device(device)
         t_slide64 = time.perf_counter()
         sw64_val_loss, sw64_val_bpb = eval_val_sliding(

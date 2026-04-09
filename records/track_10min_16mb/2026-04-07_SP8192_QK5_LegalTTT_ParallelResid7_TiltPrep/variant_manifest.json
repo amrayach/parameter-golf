@@ -1,7 +1,7 @@
 {
   "base_ref": "pr1413",
   "base_source_sha256": "654fe27bace3bd3238831c6069d1f2e6c1268452dddfd03c522cea5724ba4c78",
-  "decoded_source_sha256": "5d38d696f1d57c92882c72678f0cc52653ecf8ce1947b62965df80cfea3d2beb",
+  "decoded_source_sha256": "897388636a2fbf42848ce3993f6d361e9947f1482e5a818050daaf90332f52e9",
   "default_ngram_config": {
     "NGRAM_AGREE_BONUS": 0.1,
     "NGRAM_BASE_BETA": 2.0,
@@ -60,6 +60,7 @@
         "SKIP_TRAINING": 1
       },
       "note": "Requires an existing final_model.int6.ptz in the stack folder, typically from run D.",
+      "paid_session_followup": "R1 only: sweep NGRAM_WITHIN_BETA / NGRAM_WORD_BETA for potential free BPB. Keep local legality-audit defaults unchanged until the paid run.",
       "record_rel": "records/track_10min_16mb/2026-04-07_SP8192_QK5_LegalTTT_ParallelResid7_TiltPrep"
     }
   },
@@ -67,5 +68,5 @@
   "stack_ref": "pr1437",
   "stack_source_record_rel": "records/track_10min_16mb/2026-04-07_SP8192_ParallelResid7_Loop35_NgramTilt",
   "variant": "parallel_residual_plus_corrected_token_only_ngram_prep",
-  "wrapper_bytes": 17390
+  "wrapper_bytes": 18510
 }

@@ -1,33 +1,46 @@
 # Agent Bootstrap
 
-If this is a fresh session (any tool: Claude Code, Codex, or Antigravity), read these files in order:
+If this is a fresh session for Claude Code, Codex, or Antigravity, read these files in order:
 
-1. `AGENTS.md` — shared entry point, current working mode
-2. `docs/campaign/AGENT_SYNC.md` — mutable source of truth (current objective, results, next steps)
-3. `CLAUDE.md` — standing rules and operational constraints
-4. `docs/codex-memory/project-state.md` — full project state
-5. `docs/codex-memory/decisions.md` — locked decisions
-6. `docs/codex-memory/next-session.md` — next actions
+1. `AGENTS.md`
+2. `docs/campaign/AGENT_SYNC.md`
+3. `CLAUDE.md`
+4. `docs/codex-memory/project-state.md`
+5. `docs/codex-memory/decisions.md`
+6. `docs/codex-memory/next-session.md`
 
-Then proceed with the next pending action.
+Then continue from the next pending foreground action.
 
 ## Current status
 
-- **Session 05c-plus is the best measured branch, not the next run target**
-- Best measured code: `records/track_non_record_16mb/2026-03-30_training_bundle_plus/train_gpt.py`
-- Session 05f and Session 05g are measured negatives; do not continue local bigram / XSA micro-deltas
-- GPTQ probe on the 05c-plus architecture is complete and negative; GPTQ is permanently parked for this model family
-- Diagnostics workflow exists:
-  - `diagnostics/2026-03-31_05c_plus/`
-  - `scripts/diagnostics/diagnose_weights.py`
-  - `scripts/diagnostics/compress_probe.py`
-- Next: follow the live gate in `docs/campaign/AGENT_SYNC.md`, rerun the corrected compression probe, then decide whether the next larger fork is compression+width or something less width-dependent
-- Session 03 anchor: sliding s64 `1.12904446`, roundtrip `1.15247273`, `91.37 ms/step`, `15751324` bytes
-- 05c-plus: sliding s64 `1.12557920`, roundtrip `1.14933197`, `100.39 ms/step`, `15589271` bytes
-- GPTQ, FA3, TTT, SWA are all parked
+- The faithful RunPod `#1394` SP8192 baseline is complete and is now the stable base.
+- Best measured code:
+  - `records/track_10min_16mb/2026-04-06_pr1394_sp8192_faithful_repro/train_gpt.py`
+- Best measured 3-seed result:
+  - `1337`: sliding `1.08471849`, roundtrip `1.10134414`, bytes `15,986,188`
+  - `42`: sliding `1.08576707`, roundtrip `1.10263175`, bytes `15,987,537`
+  - `2025`: sliding `1.08513825`, roundtrip `1.10167670`, bytes `15,986,526`
+  - mean sliding `1.08520794`
+- The preserved `#1394` archive is already fetched locally:
+  - `artifacts/runpod_pull/pr1394_archive_2026-04-07/pr1394_archive_2026-04-07.tgz`
+  - SHA256 `95e3a38cc89a160469d8417d0d4dbd40ef6a5106803d25ccdab5c0f86e2c0b07`
+- The extracted archive is present locally:
+  - `artifacts/runpod_pull/pr1394_archive_2026-04-07/pr1394_archive_2026-04-07`
+- The strict local proof bundle exists:
+  - `records/track_10min_16mb/2026-04-07_pr1394_sp8192_runpod_strict`
+- The exact `2025` binaries are preserved locally; exact `1337` and `42` binaries were already overwritten before archiving.
+- The old CPU-only recovery pod no longer holds unique `#1394` evidence and may be terminated/deleted.
+- The next foreground move is a fresh paid RunPod `8xH100 SXM` session for faithful `#1413`.
+- Use:
+  - `git pull --ff-only`
+  - `bash scripts/runpod_1413.sh 0`
+- `07c1` remains background evidence only. Latest checked Pegasus reruns:
+  - `2740306`: `FAILED`
+  - `2740307`: `FAILED`
+- Do not spend foreground time on more `#1394` reruns, more `07c1` polish, SLOT, or the old `05c-plus` / GPTQ / mixed-int5 branch family.
 
 ## One-line resume prompt
 
 ```text
-Read AGENTS.md, then docs/campaign/AGENT_SYNC.md, then CLAUDE.md. Session 05c-plus is the best measured branch, 05f and 05g are negative, and GPTQ is permanently parked after 05e. Use diagnostics/2026-03-31_05c_plus/ plus scripts/diagnostics/diagnose_weights.py and scripts/diagnostics/compress_probe.py, then follow AGENT_SYNC to decide the next larger fork.
+Read AGENTS.md, then docs/campaign/AGENT_SYNC.md, then CLAUDE.md. The recovered #1394 archive and strict proof bundle already exist locally, the old CPU recovery pod can be deleted, and the next paid H100 session should start faithful #1413 via bash scripts/runpod_1413.sh 0.
 ```

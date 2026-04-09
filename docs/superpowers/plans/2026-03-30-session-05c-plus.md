@@ -1,5 +1,7 @@
 # Session 05c-plus Training Bundle Implementation Plan
 
+> Historical note (2026-04-07): this plan is archived lineage only. The old `05c-plus` branch family is no longer the active mainline. Current live context is `#1394` recovered locally as the stable base, with faithful `#1413` as the next foreground branch.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Create a new training record with 4 quality improvements (XSA-all, VE128, warmdown 3500, LeakyReLU(0.5)^2) on top of the Session 03 anchor, ready for immediate 8xH100 launch.

@@ -37,7 +37,7 @@ This file (`CLAUDE.md`) contains **stable standing rules only**. Do not duplicat
 
 - Pegasus `8xH100` is the active development target.
 - Pegasus `A100-80GB` is fallback or grant-supporting evidence, not the mainline path.
-- RunPod is reserved for final validation only.
+- RunPod is an overflow / fast-iteration lane when credits are available; Pegasus remains the canonical validation target.
 - `git clone` and `git pull` are the default sync path for remote workspaces.
 - Use `rsync` only to push local uncommitted changes quickly.
 
@@ -62,6 +62,7 @@ These are stable constraints learned from operational experience. They apply to 
 ### Job output
 - **Never use `| tail -1`** on Pegasus training or install commands. It hides errors and progress.
 - Always set `PYTHONUNBUFFERED=1` or use `python -u` to prevent output buffering.
+- If an export format depends on an optional package (for example `brotli`), make it a hard dependency or install it once before `srun`. Do not allow rank-local fallback compressors.
 
 ### Allocation shape
 - **Always include `--nodes=1`** for challenge-shaped `8xH100` runs. Without it, Slurm may split across nodes, breaking NVSwitch locality.
