@@ -1,7 +1,7 @@
 {
   "base_ref": "pr1413",
   "base_source_sha256": "654fe27bace3bd3238831c6069d1f2e6c1268452dddfd03c522cea5724ba4c78",
-  "decoded_source_sha256": "cf4d43bb5cd36becd73e32d39fb2ab01a0edf2bd23172fbcf03200fac0f85385",
+  "decoded_source_sha256": "19491b6cc88d9cd611c430bacabb04881d4cee303f81ba1ccd9a592ef3fbf2f2",
   "default_ngram_config": {
     "NGRAM_AGREE_BONUS": 0.1,
     "NGRAM_BASE_BETA": 2.0,
@@ -68,5 +68,5 @@
   "stack_ref": "pr1437",
   "stack_source_record_rel": "records/track_10min_16mb/2026-04-07_SP8192_ParallelResid7_Loop35_NgramTilt",
   "variant": "parallel_residual_plus_corrected_token_only_ngram_prep",
-  "wrapper_bytes": 19605
+  "wrapper_bytes": 19489
 }

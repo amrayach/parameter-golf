@@ -118,8 +118,15 @@ def _patch_stack_source(pr1413_source: str) -> str:
 
     source = _replace_once(
         source,
+        "import collections,copy,glob,io,lzma,math,os",
+        "import collections,copy,glob,io,json,lzma,math,os,struct",
+        "custom pack imports",
+    )
+
+    source = _replace_once(
+        source,
         "ttt_grad_clip=float(os.environ.get('TTT_GRAD_CLIP',1.));compressor=os.environ.get('COMPRESSOR','brotli');",
-        "ttt_grad_clip=float(os.environ.get('TTT_GRAD_CLIP',1.));ttt_optimizer=os.environ.get('TTT_OPTIMIZER','sgd');ttt_decay=float(os.environ.get('TTT_DECAY',0.));skip_training=bool(int(os.environ.get('SKIP_TRAINING','0')));parallel_residual_start=int(os.environ.get('PARALLEL_RESIDUAL_START',-1));cautious_muon=bool(int(os.environ.get('CAUTIOUS_MUON','0')));owc_enabled=bool(int(os.environ.get('OWC_ENABLED','0')));owc_gamma_steps=int(os.environ.get('OWC_GAMMA_STEPS',10));cdquant_enabled=bool(int(os.environ.get('CDQUANT_ENABLED','0')));cdquant_iters=int(os.environ.get('CDQUANT_ITERS',3));ngram_tilt_enabled=bool(int(os.environ.get('NGRAM_TILT_ENABLED','0')));ngram_base_beta=float(os.environ.get('NGRAM_BASE_BETA',2.));ngram_agree_bonus=float(os.environ.get('NGRAM_AGREE_BONUS',.1));ngram_within_threshold=float(os.environ.get('NGRAM_WITHIN_THRESHOLD',.25));ngram_within_beta=float(os.environ.get('NGRAM_WITHIN_BETA',0.));ngram_word_threshold=float(os.environ.get('NGRAM_WORD_THRESHOLD',.8));ngram_word_beta=float(os.environ.get('NGRAM_WORD_BETA',0.));ngram_open_table_bits=int(os.environ.get('NGRAM_OPEN_TABLE_BITS',26));ngram_order_stride=int(os.environ.get('NGRAM_ORDER_STRIDE',2));compressor=os.environ.get('COMPRESSOR','brotli');",
+        "ttt_grad_clip=float(os.environ.get('TTT_GRAD_CLIP',1.));ttt_optimizer=os.environ.get('TTT_OPTIMIZER','sgd');ttt_decay=float(os.environ.get('TTT_DECAY',0.));skip_training=bool(int(os.environ.get('SKIP_TRAINING','0')));parallel_residual_start=int(os.environ.get('PARALLEL_RESIDUAL_START',-1));cautious_muon=bool(int(os.environ.get('CAUTIOUS_MUON','0')));owc_enabled=bool(int(os.environ.get('OWC_ENABLED','0')));owc_gamma_steps=int(os.environ.get('OWC_GAMMA_STEPS',10));owc_scope=os.environ.get('OWC_SCOPE','all');cdquant_enabled=bool(int(os.environ.get('CDQUANT_ENABLED','0')));cdquant_iters=int(os.environ.get('CDQUANT_ITERS',3));ngram_tilt_enabled=bool(int(os.environ.get('NGRAM_TILT_ENABLED','0')));ngram_base_beta=float(os.environ.get('NGRAM_BASE_BETA',2.));ngram_agree_bonus=float(os.environ.get('NGRAM_AGREE_BONUS',.1));ngram_within_threshold=float(os.environ.get('NGRAM_WITHIN_THRESHOLD',.25));ngram_within_beta=float(os.environ.get('NGRAM_WITHIN_BETA',0.));ngram_word_threshold=float(os.environ.get('NGRAM_WORD_THRESHOLD',.8));ngram_word_beta=float(os.environ.get('NGRAM_WORD_BETA',0.));ngram_open_table_bits=int(os.environ.get('NGRAM_OPEN_TABLE_BITS',26));ngram_order_stride=int(os.environ.get('NGRAM_ORDER_STRIDE',2));export_packing=os.environ.get('EXPORT_PACKING','torchsave');requant_only=bool(int(os.environ.get('REQUANT_ONLY','0')));compressor=os.environ.get('COMPRESSOR','brotli');",
         "hyperparameter extension",
     )
 
@@ -237,13 +244,22 @@ def _patch_stack_source(pr1413_source: str) -> str:
         (
             "\t\tcs=h.embed_clip_sigmas if'tok_emb'in name else h.matrix_clip_sigmas;"
             "bits=h.embed_bits if'tok_emb'in name else h.matrix_bits;"
-            "owc=h.owc_gamma_steps if h.owc_enabled else 0;"
+            "cat='embed' if'tok_emb'in name else('attn' if'.attn.'in name else('mlp' if'.mlp.'in name else'other'));"
+            "owc_allowed=(h.owc_scope=='all')or(h.owc_scope=='matrix' and cat in('attn','mlp'))or(h.owc_scope==cat);"
+            "owc=h.owc_gamma_steps if h.owc_enabled and owc_allowed else 0;"
             "cdi=h.cdquant_iters if h.cdquant_enabled else 0;"
             "q,s=gptq_quantize_weight(t,hessians[name],clip_sigmas=cs,clip_range=2**(bits-1)-1,owc_steps=owc,cdquant_iters=cdi);"
             "result[name+'.q']=q;result[name+'.scale']=s;"
             'meta[name]=f"gptq (int{bits})"+(f" owc{owc}" if owc else "")+(f" cd{cdi}" if cdi else "")'
         ),
         "OWC+CDQuant call site in gptq_mixed_quantize",
+    )
+
+    source = _replace_once(
+        source,
+        'for cat in sorted(categories):log(f"  {cat}: {", ".join(sorted(categories[cat]))}")',
+        'for cat in sorted(categories):log(f"  {cat}: {\', \'.join(sorted(categories[cat]))}")',
+        "quantized weights summary f-string fix",
     )
 
     source = _replace_once(
@@ -363,7 +379,9 @@ def timed_eval(label,fn,*args,**kwargs):""",
         "def main():",
         """def train_and_eval(h,device):
 \trandom.seed(h.seed);np.random.seed(h.seed);torch.manual_seed(h.seed);torch.cuda.manual_seed_all(h.seed);val_data=ValidationData(h,device);log(f"train_shards: {len(list(Path(h.datasets_dir).resolve().glob("fineweb_train_*.bin")))}");log(f"val_tokens: {val_data.val_tokens.numel()-1}")
-\tif not h.skip_training:
+\tif h.requant_only:
+\t\tlog(f'requant_only: loading {h.model_path} for re-quantization with owc_enabled={h.owc_enabled} owc_scope={h.owc_scope} owc_gamma_steps={h.owc_gamma_steps}');base_model=GPT(h).to(device);base_model.load_state_dict(torch.load(h.model_path,map_location=device,weights_only=True));serialize(h,base_model,Path(__file__).read_text(encoding='utf-8'))
+\telif not h.skip_training:
 \t\tbase_model,compiled_model=train_model(h,device,val_data);torch._dynamo.reset();timed_eval('pre-quantization post-ema',eval_val,h,device,val_data,compiled_model);serialize(h,base_model,Path(__file__).read_text(encoding='utf-8'))
 \telse:
 \t\tlog('skip_training:reusing existing quantized artifact')
@@ -386,15 +404,78 @@ def main():""",
         "train_and_eval block",
     )
 
+    source = _replace_once(
+        source,
+        'log(f"train_shards: {len(list(Path(h.datasets_dir).resolve().glob("fineweb_train_*.bin")))}");log(f"val_tokens: {val_data.val_tokens.numel()-1}")',
+        'log(f"train_shards: {len(list(Path(h.datasets_dir).resolve().glob(\'fineweb_train_*.bin\')))}");log(f"val_tokens: {val_data.val_tokens.numel()-1}")',
+        "train shard logging quote fix",
+    )
+
+    source = _replace_once(
+        source,
+        "def _compress(data,compressor):",
+        """_DTYPE_TO_STR={torch.float32:'f32',torch.float16:'f16',torch.bfloat16:'bf16',torch.int8:'i8',torch.int16:'i16',torch.int32:'i32',torch.int64:'i64',torch.bool:'bool'}
+_STR_TO_NP={'f32':np.float32,'f16':np.float16,'bf16':np.float32,'i8':np.int8,'i16':np.int16,'i32':np.int32,'i64':np.int64,'bool':np.bool_}
+_DTYPE_ELEM_SIZE={'f32':4,'f16':2,'bf16':2,'i8':1,'i16':2,'i32':4,'i64':8,'bool':1}
+def _custom_pack(state_dict,meta,shuffle=True):
+\theader_entries={};chunks=[];offset=0
+\tfor name in sorted(state_dict.keys()):
+\t\ttensor=state_dict[name];dtype_str=_DTYPE_TO_STR.get(tensor.dtype)
+\t\tif dtype_str is None:raise ValueError(f"Unsupported dtype {tensor.dtype} for {name}")
+\t\traw=tensor.float().numpy().tobytes()if tensor.dtype==torch.bfloat16 else tensor.numpy().tobytes();elem_size=_DTYPE_ELEM_SIZE[dtype_str]
+\t\tif shuffle and elem_size>1:raw=_byte_shuffle(raw,elem_size)
+\t\theader_entries[name]={'s':list(tensor.shape),'d':dtype_str,'o':offset,'n':len(raw),'e':tensor.numel()}
+\t\tchunks.append(raw);offset+=len(raw)
+\theader_json=json.dumps({'t':header_entries,'m':meta},separators=(',',':')).encode()
+\treturn struct.pack('<I',len(header_json))+header_json+b''.join(chunks)
+def _custom_unpack(blob,shuffle=True):
+\theader_len=struct.unpack('<I',blob[:4])[0];header=json.loads(blob[4:4+header_len]);data_start=4+header_len;state_dict={}
+\tfor(name,info)in header['t'].items():
+\t\traw=blob[data_start+info['o']:data_start+info['o']+info['n']];dtype_str=info['d'];elem_size=_DTYPE_ELEM_SIZE[dtype_str]
+\t\tif shuffle and elem_size>1:raw=_byte_unshuffle(raw)
+\t\tif dtype_str=='bf16':tensor=torch.from_numpy(np.frombuffer(bytearray(raw),dtype=np.float32).copy()).to(torch.bfloat16).reshape(info['s'])
+\t\telse:tensor=torch.from_numpy(np.frombuffer(bytearray(raw),dtype=_STR_TO_NP[dtype_str]).copy()).reshape(info['s'])
+\t\tstate_dict[name]=tensor
+\treturn state_dict,header['m']
+def _compress(data,compressor,already_shuffled=False):""",
+        "custom pack helpers",
+    )
+
+    source = _replace_once(
+        source,
+        "\tdata=_byte_shuffle(data)\n\tif compressor=='lzma':return lzma.compress(data,preset=6)\n\telif compressor=='brotli':import brotli;return brotli.compress(data,quality=11)\n\traise ValueError(f\"Unknown compressor: {compressor!r}\")\ndef _decompress(data,compressor):\n\tif compressor=='lzma':raw=lzma.decompress(data)\n\telif compressor=='brotli':import brotli;raw=brotli.decompress(data)\n\telse:raise ValueError(f\"Unknown compressor: {compressor!r}\")\n\traw=_byte_unshuffle(raw);return raw",
+        "\tif not already_shuffled:data=_byte_shuffle(data)\n\tif compressor=='lzma':return lzma.compress(data,preset=6)\n\telif compressor=='brotli':import brotli;return brotli.compress(data,quality=11)\n\traise ValueError(f\"Unknown compressor: {compressor!r}\")\ndef _decompress(data,compressor,already_shuffled=False):\n\tif compressor=='lzma':raw=lzma.decompress(data)\n\telif compressor=='brotli':import brotli;raw=brotli.decompress(data)\n\telse:raise ValueError(f\"Unknown compressor: {compressor!r}\")\n\tif not already_shuffled:raw=_byte_unshuffle(raw)\n\treturn raw",
+        "custom pack compressor branch",
+    )
+
+    source = _replace_once(
+        source,
+        "quant_result,quant_meta=gptq_mixed_quantize(sd_cpu,hessians,h);quant_buf=io.BytesIO();torch.save({'w':quant_result,'m':quant_meta},quant_buf);quant_raw=quant_buf.getvalue();quant_blob=_compress(quant_raw,h.compressor);quant_file_bytes=len(quant_blob);bytes_total=quant_file_bytes+code_bytes",
+        "quant_result,quant_meta=gptq_mixed_quantize(sd_cpu,hessians,h);quant_raw=_custom_pack(quant_result,quant_meta,shuffle=True)if h.export_packing=='custompack' else io.BytesIO();\n\tif h.export_packing!='custompack':torch.save({'w':quant_result,'m':quant_meta},quant_raw);quant_raw=quant_raw.getvalue()\n\tquant_blob=_compress(quant_raw,h.compressor,already_shuffled=h.export_packing=='custompack');quant_file_bytes=len(quant_blob);bytes_total=quant_file_bytes+code_bytes",
+        "serialize export branch",
+    )
+
+    source = _replace_once(
+        source,
+        "quant_state=torch.load(io.BytesIO(_decompress(quant_blob_disk,h.compressor)),map_location='cpu');deq_state=dequantize_mixed(quant_state['w'],quant_state['m'],sd_cpu);eval_model.load_state_dict(deq_state,strict=True);return eval_model",
+        "quant_raw=_decompress(quant_blob_disk,h.compressor,already_shuffled=h.export_packing=='custompack')\n\tif h.export_packing=='custompack':quant_w,quant_m=_custom_unpack(quant_raw,shuffle=True)\n\telse:quant_state=torch.load(io.BytesIO(quant_raw),map_location='cpu');quant_w,quant_m=quant_state['w'],quant_state['m']\n\tdeq_state=dequantize_mixed(quant_w,quant_m,sd_cpu);eval_model.load_state_dict(deq_state,strict=True);return eval_model",
+        "deserialize export branch",
+    )
+
     required_markers = (
         "skip_training=bool(int(os.environ.get('SKIP_TRAINING','0')))",
         "parallel_residual_start=int(os.environ.get('PARALLEL_RESIDUAL_START',-1))",
         "cautious_muon=bool(int(os.environ.get('CAUTIOUS_MUON','0')))",
         "owc_enabled=bool(int(os.environ.get('OWC_ENABLED','0')))",
+        "owc_scope=os.environ.get('OWC_SCOPE','all')",
         "cdquant_enabled=bool(int(os.environ.get('CDQUANT_ENABLED','0')))",
+        "export_packing=os.environ.get('EXPORT_PACKING','torchsave')",
+        "requant_only=bool(int(os.environ.get('REQUANT_ONLY','0')))",
+        "requant_only: loading",
+        "def _custom_pack(state_dict,meta,shuffle=True):",
         "def _owc_optimize_clip_sigmas(",
         "if cdquant_iters>0:",
-        "owc=h.owc_gamma_steps if h.owc_enabled else 0",
+        "owc_allowed=(h.owc_scope=='all')or(h.owc_scope=='matrix' and cat in('attn','mlp'))or(h.owc_scope==cat)",
         "if group.get('cautious',False):mask=",
         "def eval_val_sliding_ttt(h,base_model,rank,world_size,device,val_data,stride,ngram_state=None):",
         "if h.ngram_tilt_enabled:",

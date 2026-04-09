@@ -46,6 +46,8 @@ COMMON_SEED=0
 COMMON_PARALLEL_RESIDUAL_START=7
 COMMON_LOOP_START=3
 COMMON_LOOP_END=5
+TIER2_ORIG_CKPT=""
+TIER2_CKPT_BACKUP=""
 
 # TSV header
 echo -e "timestamp\trun_name\tbpb\twall_seconds\tenv_vars" > "${RESULTS_DIR}/summary.tsv"
@@ -145,6 +147,15 @@ get_bpb_from_summary() {
   awk -F'\t' -v name="$run_name" '$2 == name && $3 != "FAILED" { print $3 }' "${RESULTS_DIR}/summary.tsv" | tail -1
 }
 
+print_tsv_table() {
+  local file="$1"
+  if command -v column >/dev/null 2>&1; then
+    column -t -s$'\t' "$file"
+  else
+    cat "$file"
+  fi
+}
+
 # ==========================================================================
 #  TIER 1: Eval-only runs (reuse D checkpoint via SKIP_TRAINING=1)
 # ==========================================================================
@@ -193,8 +204,8 @@ run_tier1() {
     TTT_FREEZE_BLOCKS=4
 
   # R5: dynamic combo of best eval-time settings
-  local best_decay_run=""
-  local best_decay_bpb="9999"
+  local best_decay_env=""
+  local best_decay_bpb=""
   local r2_bpb r3_bpb r4_bpb r1_bpb
 
   r1_bpb=$(get_bpb_from_summary "R1_e_baseline")
@@ -202,7 +213,7 @@ run_tier1() {
   r3_bpb=$(get_bpb_from_summary "R3_e_rmsdecay_high")
   r4_bpb=$(get_bpb_from_summary "R4_e_freeze4")
 
-  # Pick best decay
+  # Only carry a decay setting into R5 if it actually beats the baseline.
   local r5_ttt_optimizer="sgd"
   local r5_ttt_decay="0"
   local r5_freeze=""
@@ -210,11 +221,25 @@ run_tier1() {
 
   if [[ -n "$r2_bpb" && -n "$r3_bpb" ]]; then
     if awk "BEGIN { exit !($r2_bpb < $r3_bpb) }"; then
-      r5_ttt_optimizer="rmsdecay"; r5_ttt_decay="0.001"
+      best_decay_env="TTT_OPTIMIZER=rmsdecay TTT_DECAY=0.001"
+      best_decay_bpb="$r2_bpb"
     else
-      r5_ttt_optimizer="rmsdecay"; r5_ttt_decay="0.005"
+      best_decay_env="TTT_OPTIMIZER=rmsdecay TTT_DECAY=0.005"
+      best_decay_bpb="$r3_bpb"
     fi
-    r5_desc="${r5_desc} TTT_OPTIMIZER=${r5_ttt_optimizer} TTT_DECAY=${r5_ttt_decay}"
+  elif [[ -n "$r2_bpb" ]]; then
+    best_decay_env="TTT_OPTIMIZER=rmsdecay TTT_DECAY=0.001"
+    best_decay_bpb="$r2_bpb"
+  elif [[ -n "$r3_bpb" ]]; then
+    best_decay_env="TTT_OPTIMIZER=rmsdecay TTT_DECAY=0.005"
+    best_decay_bpb="$r3_bpb"
+  fi
+
+  if [[ -n "$best_decay_env" && -n "$r1_bpb" ]]; then
+    if awk "BEGIN { exit !($best_decay_bpb < $r1_bpb) }"; then
+      read -r _ r5_ttt_optimizer _ r5_ttt_decay <<<"${best_decay_env//=/ }"
+      r5_desc="${r5_desc} ${best_decay_env}"
+    fi
   fi
 
   # Check if freeze helped vs baseline
@@ -237,7 +262,7 @@ run_tier1() {
 
   echo ""
   echo "==> Tier 1 complete. Summary:"
-  column -t -s$'\t' "${RESULTS_DIR}/summary.tsv"
+  print_tsv_table "${RESULTS_DIR}/summary.tsv"
 }
 
 # ==========================================================================
@@ -246,7 +271,7 @@ run_tier1() {
 best_eval_env() {
   # Returns the env vars for the best tier 1 eval config.
   # Always includes NGRAM_TILT_ENABLED=1.
-  # Falls back to TTT_OPTIMIZER=rmsdecay TTT_DECAY=0.001 if nothing worked.
+  # Falls back to the known-good baseline if no tier 1 summary is available.
   local best_run="" best_bpb="9999"
   for rn in R1_e_baseline R2_e_rmsdecay_low R3_e_rmsdecay_high R4_e_freeze4 R5_e_combo; do
     local bpb
@@ -267,7 +292,7 @@ best_eval_env() {
 
   # Fallback if empty: safe default eval config
   if [[ -z "$env_str" ]]; then
-    env_str="SKIP_TRAINING=1 NGRAM_TILT_ENABLED=1 TTT_OPTIMIZER=rmsdecay TTT_DECAY=0.001"
+    env_str="SKIP_TRAINING=1 NGRAM_TILT_ENABLED=1"
   fi
 
   # Ensure NGRAM_TILT_ENABLED=1 is always present
@@ -294,17 +319,17 @@ run_tier2() {
   echo "==> Best eval-time config: ${eval_env_str}"
 
   # Backup original checkpoint so tier 2 runs don't permanently overwrite it
-  local orig_ckpt="${STACK_RECORD_DIR}/final_model.int6.ptz"
-  local ckpt_backup="${RESULTS_DIR}/.original_checkpoint.int6.ptz"
-  if [[ -f "${orig_ckpt}" ]]; then
-    cp "${orig_ckpt}" "${ckpt_backup}"
-    echo "==> Backed up original checkpoint to ${ckpt_backup}"
+  TIER2_ORIG_CKPT="${STACK_RECORD_DIR}/final_model.int6.ptz"
+  TIER2_CKPT_BACKUP="${RESULTS_DIR}/.original_checkpoint.int6.ptz"
+  if [[ -f "${TIER2_ORIG_CKPT}" ]]; then
+    cp "${TIER2_ORIG_CKPT}" "${TIER2_CKPT_BACKUP}"
+    echo "==> Backed up original checkpoint to ${TIER2_CKPT_BACKUP}"
   fi
 
   # Trap: restore checkpoint on any exit (crash, signal, or normal completion)
   _ckpt_cleanup() {
-    if [[ -f "${ckpt_backup}" && -f "${orig_ckpt}" ]]; then
-      cp "${ckpt_backup}" "${orig_ckpt}" 2>/dev/null || true
+    if [[ -n "${TIER2_CKPT_BACKUP}" && -n "${TIER2_ORIG_CKPT}" && -f "${TIER2_CKPT_BACKUP}" && -f "${TIER2_ORIG_CKPT}" ]]; then
+      cp "${TIER2_CKPT_BACKUP}" "${TIER2_ORIG_CKPT}" 2>/dev/null || true
       echo "==> Checkpoint restored from backup (trap)"
     fi
   }
@@ -312,8 +337,8 @@ run_tier2() {
 
   # Helper: restore original checkpoint before each training run
   restore_checkpoint() {
-    if [[ -f "${ckpt_backup}" ]]; then
-      cp "${ckpt_backup}" "${orig_ckpt}"
+    if [[ -n "${TIER2_CKPT_BACKUP}" && -n "${TIER2_ORIG_CKPT}" && -f "${TIER2_CKPT_BACKUP}" ]]; then
+      cp "${TIER2_CKPT_BACKUP}" "${TIER2_ORIG_CKPT}"
     fi
   }
 
@@ -321,7 +346,7 @@ run_tier2() {
   install_checkpoint() {
     local src="$1"
     if [[ -f "$src" ]]; then
-      cp "$src" "${orig_ckpt}"
+      cp "$src" "${TIER2_ORIG_CKPT}"
       return 0
     fi
     return 1
@@ -460,12 +485,21 @@ echo "╚═══════════════════════�
 echo ""
 
 # Sort by BPB (column 3), exclude header and FAILED runs
-{
-  head -1 "${RESULTS_DIR}/summary.tsv"
-  tail -n +2 "${RESULTS_DIR}/summary.tsv" | grep -v FAILED | sort -t$'\t' -k3 -n
-  echo "---"
-  tail -n +2 "${RESULTS_DIR}/summary.tsv" | grep FAILED || true
-} | tee "${RESULTS_DIR}/final_ranking.txt" | column -t -s$'\t'
+if command -v column >/dev/null 2>&1; then
+  {
+    head -1 "${RESULTS_DIR}/summary.tsv"
+    tail -n +2 "${RESULTS_DIR}/summary.tsv" | grep -v FAILED | sort -t$'\t' -k3 -n
+    echo "---"
+    tail -n +2 "${RESULTS_DIR}/summary.tsv" | grep FAILED || true
+  } | tee "${RESULTS_DIR}/final_ranking.txt" | column -t -s$'\t'
+else
+  {
+    head -1 "${RESULTS_DIR}/summary.tsv"
+    tail -n +2 "${RESULTS_DIR}/summary.tsv" | grep -v FAILED | sort -t$'\t' -k3 -n
+    echo "---"
+    tail -n +2 "${RESULTS_DIR}/summary.tsv" | grep FAILED || true
+  } | tee "${RESULTS_DIR}/final_ranking.txt"
+fi
 
 echo ""
 echo "End: $(date -Iseconds)"
