@@ -380,7 +380,7 @@ def timed_eval(label,fn,*args,**kwargs):""",
         """def train_and_eval(h,device):
 \trandom.seed(h.seed);np.random.seed(h.seed);torch.manual_seed(h.seed);torch.cuda.manual_seed_all(h.seed);val_data=ValidationData(h,device);log(f"train_shards: {len(list(Path(h.datasets_dir).resolve().glob("fineweb_train_*.bin")))}");log(f"val_tokens: {val_data.val_tokens.numel()-1}")
 \tif h.requant_only:
-\t\tlog(f'requant_only: loading {h.model_path} for re-quantization with owc_enabled={h.owc_enabled} owc_scope={h.owc_scope} owc_gamma_steps={h.owc_gamma_steps}');base_model=GPT(h).to(device);base_model.load_state_dict(torch.load(h.model_path,map_location=device,weights_only=True));serialize(h,base_model,Path(__file__).read_text(encoding='utf-8'))
+\t\tlog(f'requant_only: loading {h.model_path} for re-quantization with owc_enabled={h.owc_enabled} owc_scope={h.owc_scope} owc_gamma_steps={h.owc_gamma_steps}');base_model=GPT(h).to(device);base_model.load_state_dict(torch.load(h.model_path,map_location=device,weights_only=True));base_model=base_model.to(torch.bfloat16);serialize(h,base_model,Path(__file__).read_text(encoding='utf-8'))
 \telif not h.skip_training:
 \t\tbase_model,compiled_model=train_model(h,device,val_data);torch._dynamo.reset();timed_eval('pre-quantization post-ema',eval_val,h,device,val_data,compiled_model);serialize(h,base_model,Path(__file__).read_text(encoding='utf-8'))
 \telse:
