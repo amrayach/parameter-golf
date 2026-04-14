@@ -5,18 +5,21 @@ Date: 2026-03-31
 ## Objective
 
 Primary:
-- keep Session 05c-plus as the current best measured branch
-- finish compression-path feasibility and decide whether the next larger fork should spend bytes on modest width or pivot to a different thesis
+
+- reproduce PR `#1610` directly and layer a full-vocab posterior corrector to push below 1.070 BPB
+- source base: `#1610` `train_gpt.py` at SHA `ca191953` (replaces the earlier `#1530`-first plan)
+- execution plan: `docs/campaign/PLAN_PR1610_CORRECTOR.md` (locked Revision 3, 2026-04-14)
+- budget: $212 RunPod (~35 runs), deadline Apr 30
+- fallback cascade: export-only (#1586-style) -> retrain -> writeup if corrector fails
 
 Secondary:
-- keep the Session 03 anchor as the fixed reference
-- preserve exact launch, logging, artifact, and evaluation discipline
 
-Completed:
-- Session 05e GPTQ probe: **negative result** (44/66 layers worse than naive). GPTQ permanently parked.
-- Session 05f follow-up: **negative result** vs 05c-plus (`1.12660664` vs `1.12557920`)
-- Session 05g follow-up: **negative result** vs 05c-plus (`1.12584234` vs `1.12557920`), with modest speed recovery but cap failure on the old export path
-- Initial compression-path probe: custom serialization + brotli-10 materially outperforms the current `torch.save + zstd` path on both 05c-plus and 05g
+- keep non-record PR `#1598` open and frozen; do not edit unless reviewers ask
+- D / R1 evidence bundle is frozen as local evidence base
+- keep `07c1` background-only
+- cleanup still pending:
+  - delete the old RunPod pod if it still exists
+  - rotate the leaked RunPod API key
 
 ## Current campaign state
 

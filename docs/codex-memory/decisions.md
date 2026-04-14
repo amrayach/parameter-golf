@@ -2,10 +2,17 @@
 
 ## Strategy
 
-- Do not lead with the RFN thesis idea.
-- Build a strong non-TTT anchor first.
-- Treat TTT as a later integration, only after the anchor is stronger.
-- Treat RFN or attribution-graph work as a sidecar probe, not the main competition bet.
+- Active record hunt: reproduce `#1610` directly + posterior corrector
+- Source base: `#1610` `train_gpt.py` at SHA `ca191953`
+- Execution plan: `docs/campaign/PLAN_PR1610_CORRECTOR.md` (locked Revision 3)
+- D / R1 evidence bundle is frozen; `#1598` non-record PR is frozen
+- Treat RFN or attribution-graph work as a sidecar probe, not the main competition bet
+
+## #1610 direct base replaces #1530-first plan (2026-04-14)
+
+Decision: use `#1610` `train_gpt.py` directly as the source base, NOT patch D variant, NOT reproduce `#1530` first.
+
+Rationale: D variant is 558-line LZMA-minified, missing 7 critical #1610 features (BatchedTTTLoRA, phased TTT eval, DocumentPackingLoader, Triton fused MLP, `_build_cu_seqlens`, weight banking, VarLen FA3). #1610 PR body misleads about scope of changes from #1530 (vocab 8192 vs 1024, 11 vs 9 layers, mlp_mult 4 vs 2). Verified at pinned SHAs: #1610 `ca191953`, #1530 `7dca3ded`.
 
 ## Competition phase
 

@@ -2,19 +2,37 @@
 
 ## Phase
 
-**Compression-path feasibility is active. 05c-plus remains the best measured branch.**
-
-GPTQ is permanently parked. 05f and 05g are closed negatives.
+**Updated 2026-04-14.** Strategy pivot: reproduce `#1610` directly + posterior corrector. Plan locked at `docs/campaign/PLAN_PR1610_CORRECTOR.md` (Revision 3).
 
 ## Immediate next action
 
-1. Commit/push the repo hygiene pass so `scripts/diagnostics/` is available on Pegasus.
-2. Rerun the corrected compression probe on the saved 05c-plus artifact.
-3. Rerun the corrected compression probe on the saved 05g artifact for comparison.
-4. Decide whether the next larger fork is:
-   - compression-path upgrade + modest width, or
-   - a different larger fork that does not assume width unlock.
-5. Keep 05c-plus as the fallback control branch until a larger fork beats it.
+Read only:
+1. `AGENTS.md`
+2. `docs/campaign/AGENT_SYNC.md`
+3. `CLAUDE.md`
+4. `docs/campaign/PLAN_PR1610_CORRECTOR.md`
+
+**Task for next session (Session B): baseline reproduction only.**
+
+1. **Verify pinned source exists.**
+   - `/tmp/pr1610_train_gpt_pinned.py` should exist from prior session
+   - If missing, re-fetch from GitHub at SHA `ca1919539dc6e328ea890cb03ad3ca1c5a84da55`
+
+2. **Run dependency gate.**
+   - Fetch `requirements.txt` from #1610 at pinned SHA
+   - Verify: flash_attn_interface (FA3), triton, brotli, sentencepiece, torch version
+   - Document any version mismatches
+
+3. **Run baseline reproduction (Gate A then Gate B).**
+   - Seed 0 first, verify within 0.003 of published 1.07258
+   - Then seeds 1, 2 for 3-seed mean
+
+4. **Do not start the corrector.**
+
+Subsequent sessions:
+- **Session C**: corrector skeleton + legality tests + benchmark
+- **Session D**: first eval-only corrector trial
+- **Session E**: fallback / README / submission polish
 
 ## What happened in Session 05c-plus / 05f (MEASURED)
 

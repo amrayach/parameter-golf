@@ -32,13 +32,12 @@ For deep context (campaign strategy, prior experiments, hardware state):
 
 ## Current Working Mode
 
-- Active goal: finish compression-path feasibility on the saved 05c-plus / 05g artifacts, then decide whether to open one coherent larger fork
-- Best measured branch: `records/track_non_record_16mb/2026-03-30_training_bundle_plus/train_gpt.py` (05c-plus)
-- Current probe utility: `scripts/diagnostics/compress_probe.py`
-- Current checkpoint utility: `scripts/diagnostics/diagnose_weights.py`
-- 05c-plus result: quality-positive (sliding s64 `1.12558`, delta `-0.00347`), throughput regressed (`100.39 ms`, +9ms)
-- 05f result: negative vs 05c-plus (sliding s64 `1.12661`, delta `+0.00103`)
-- 05g result: negative vs 05c-plus despite modest throughput recovery; over cap on the old export path
-- Local XSA / bigram micro-deltas are exhausted on this family
-- GPTQ status: permanently parked
-- Out of scope: FA3, TTT, SWA, GPTQ, local XSA/bigram micro-deltas, Parallel Muon, Parameter Banking, Late QAT, LZMA
+- Active goal: reproduce PR `#1610` directly and layer a full-vocab posterior corrector to push below 1.070 BPB
+- Execution plan: `docs/campaign/PLAN_PR1610_CORRECTOR.md` (locked Revision 3)
+- Source base: `#1610` `train_gpt.py` at SHA `ca191953` (NOT patched D variant)
+- Non-record PR `#1598` remains open and frozen; do not edit unless reviewers request changes
+- Best measured result: canonical D 5-seed mean TTT BPB `1.08129` (sigma = 0.00059)
+- Target: <= 1.070 BPB via #1610 reproduction + posterior corrector
+- Budget: $212 RunPod (~35 runs), deadline Apr 30
+- Fallback cascade defined in plan if corrector < 0.001 BPB gain
+- Out of scope: more Pegasus resubmissions, paid OWC salvage on D stack, SLOT, pre-quant validation TTT, casefold tokenizers, D-variant patching

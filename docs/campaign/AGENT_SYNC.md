@@ -4,21 +4,30 @@ Date: 2026-04-01
 
 ## Current Objective
 
-**Compression-path upgrade** is the active next move. 05c-plus remains the best measured branch.
+Reproduce PR `#1610` directly and layer a full-vocab posterior corrector to push below 1.070 BPB.
 
-The local search around 05c-plus is **exhausted**: three consecutive negative branches (05e GPTQ, 05f bigram/warmdown, 05g XSA-8) confirm the local optimum. The strategy shifts from micro-deltas to a larger coherent fork gated by compression feasibility.
+Execution plan: `docs/campaign/PLAN_PR1610_CORRECTOR.md` (locked Revision 3, 2026-04-14).
 
-GPTQ is **permanently parked** — failed on both relu² anchor (7 ablations) and leaky_relu² 05c-plus (05e probe: 44/66 layers worse than naive). May be re-evaluated on a substantially different future fork.
+Key decisions:
+1. source base is `#1610` `train_gpt.py` at SHA `ca191953` -- NOT patched D variant
+2. non-record PR `#1598` remains open and frozen; do not edit unless reviewers ask
+3. D / R1 evidence bundle is frozen; no more synthesis on that stack
+4. budget: $212 RunPod (~35 runs), deadline Apr 30
+5. fallback cascade defined if corrector < 0.001 BPB gain (export-only -> retrain -> writeup)
+
+The mainline is now:
+- reproduce `#1610` faithfully (Gate A: seed-0 within 0.003 of published 1.07258)
+- validate 3-seed reproduction (Gate B: mean within 0.002 of published 1.07336)
+- add full-vocab posterior corrector (eval-only on existing checkpoint first)
+- multi-seed validation if corrector shows >= 0.002 BPB gain
+- target: record-track PR at <= 1.070 BPB
 
 ## Challenge Reality
 
 - Official leaderboard entry is **record-gated**, not top-5-open-entry.
 - A record submission must beat the current official SOTA by at least `0.005` nats and show `p < 0.01`.
-- Current official merged #1 is PR #1019 at `1.1147` BPB (3-seed mean `1.88218` nats).
-- Record threshold: `<= 1.87718` nats.
-- Current open frontier is lower:
-  - PR #1089: `1.1086` BPB, 3-seed mean
-  - PR #1060: `1.1122` BPB, 3-seed mean
+- Clean legal frontier: PR `#1610` at 1.0728 BPB (3-seed mean).
+- Merged SOTA: PR `#1493` at 1.0810 BPB.
 
 ## Current Mainline Plan
 
