@@ -12,6 +12,53 @@ import triton.language as tl
 from triton.tools.tensor_descriptor import TensorDescriptor
 
 
+class PrefixNgramCorrector:
+    """Prefix-only posterior corrector. State: scored prefix [0,t) only.
+    Call get_logit_bias() BEFORE scoring position t; call update(x_t) AFTER.
+    Laplace base guarantees full-vocab support (LEGALITY_SPEC.md Condition 2)."""
+    def __init__(self, V, alpha, orders):
+        self.V, self.alpha, self.orders = V, alpha, sorted(orders)
+        self.reset()
+    def reset(self):
+        self.uni = torch.ones(self.V, dtype=torch.int32)  # Laplace: count >= 1
+        self.ng = {n: {} for n in self.orders}            # {n:{ctx_hash:{tok:cnt}}}
+        self.hist = []
+        self._lu = self._lz = None
+    def _cache(self):
+        if self._lu is None:
+            self._lu = torch.log(self.uni.float())
+            self._lz = torch.logsumexp(self._lu, 0).item()
+    def get_logit_bias(self):
+        """Return [V] float32 logit bias from prefix [0,t). Call BEFORE update."""
+        self._cache()
+        b = self.alpha * (self._lu - self._lz)
+        if self.hist and self.orders:
+            delta = torch.zeros(self.V)
+            lu, lz = self._lu.tolist(), self._lz
+            for n in self.orders:
+                ctx = tuple(self.hist[-(n-1):]) if n > 1 else ()
+                tbl = self.ng[n].get(hash(ctx))
+                if tbl:
+                    tot = sum(tbl.values())
+                    for tok, cnt in tbl.items():
+                        delta[tok] += self.alpha * (
+                            math.log((cnt+1)/(tot+self.V)) - (lu[tok]-lz)
+                        )
+            b = b + delta
+        return b
+    def update(self, token_id):
+        """Record scored token x_t. Call AFTER scoring position t."""
+        t = int(token_id)
+        self.uni[t] += 1
+        self._lu = self._lz = None
+        for n in self.orders:
+            ctx = tuple(self.hist[-(n-1):]) if n > 1 else ()
+            h = hash(ctx)
+            d = self.ng[n].setdefault(h, {})
+            d[t] = d.get(t, 0) + 1
+        self.hist.append(t)
+
+
 class Hyperparameters:
     data_dir = os.environ.get("DATA_DIR", "./data/")
     seed = int(os.environ.get("SEED", 1337))
@@ -107,6 +154,8 @@ class Hyperparameters:
     )
     phased_ttt_enabled = bool(int(os.environ.get("PHASED_TTT_ENABLED", "0")))
     phased_ttt_prefix_docs = int(os.environ.get("PHASED_TTT_PREFIX_DOCS", 10000))
+    corrector_alpha = float(os.environ.get("CORRECTOR_ALPHA", "0.0"))
+    corrector_orders = os.environ.get("CORRECTOR_ORDERS", "8")
     ttt_doc_limit = int(os.environ.get("TTT_DOC_LIMIT", 0))
     val_doc_fraction = float(os.environ.get("VAL_DOC_FRACTION", 1.0))
     compressor = os.environ.get("COMPRESSOR", "brotli")
@@ -997,7 +1046,7 @@ class GPT(nn.Module):
             reduction="mean",
         )
 
-    def forward_ttt(self, input_ids, target_ids, lora):
+    def forward_ttt(self, input_ids, target_ids, lora, logit_bias=None):
         x = self.tok_emb(input_ids)
         x = F.rms_norm(x, (x.size(-1),))
         if self.embed_proj is not None:
@@ -1070,6 +1119,8 @@ class GPT(nn.Module):
             logits = self.lm_head(x)
         logits = logits + lora.lm_head_lora(x)
         logits = self.logit_softcap * torch.tanh(logits / self.logit_softcap)
+        if logit_bias is not None:
+            logits = logits + logit_bias  # [B,1,V] broadcast — no dense [B,S,V] alloc
         bsz, sl, V = logits.shape
         return F.cross_entropy(
             logits.float().reshape(-1, V), target_ids.reshape(-1), reduction="none"
@@ -2375,7 +2426,7 @@ def train_val_ttt_global_sgd_distributed(h, device, val_data, base_model, val_to
     base_model.eval()
 
 
-def eval_val_ttt_phased(h, base_model, device, val_data, forward_ttt_train):
+def eval_val_ttt_phased(h, base_model, device, val_data, forward_ttt_train, correctors=None):
     global BOS_ID
     if BOS_ID is None:
         BOS_ID = 1
@@ -2467,6 +2518,8 @@ def eval_val_ttt_phased(h, base_model, device, val_data, forward_ttt_train):
                 k_lora=h.ttt_k_lora, mlp_lora=h.ttt_mlp_lora, o_lora=h.ttt_o_lora,
             ).to(device)
             cur_opt = _build_opt(cur_lora)
+        # Corrector state is global within a phase (LEGALITY_SPEC.md §Q3):
+        # reset happens only at SGD boundary, NOT per document-batch.
         pred_lens = [doc_len - 1 for _, doc_len in batch]
         num_chunks = [(pl + chunk_size - 1) // chunk_size for pl in pred_lens]
         max_nc = max(num_chunks)
@@ -2506,8 +2559,13 @@ def eval_val_ttt_phased(h, base_model, device, val_data, forward_ttt_train):
             x = torch.where(valid, gathered_gpu[:, :context_size], 0)
             y = torch.where(valid, gathered_gpu[:, 1 : context_size + 1], 0)
             ctx_pos = torch.arange(context_size, device=device, dtype=torch.int64)
+            # Corrector: compute per-doc [V] bias → [B,1,V] before forward pass
+            _logit_bias = None
+            if correctors is not None:
+                _cb = [correctors[_b].get_logit_bias() if active[_b] else torch.zeros(h.vocab_size) for _b in range(bsz)]
+                _logit_bias = torch.stack(_cb).unsqueeze(1).to(device=device, dtype=torch.bfloat16)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                per_tok_loss = forward_ttt_train(x, y, lora=cur_lora)
+                per_tok_loss = forward_ttt_train(x, y, lora=cur_lora, logit_bias=_logit_bias)
             with torch.no_grad():
                 _accumulate_bpb(
                     per_tok_loss,
@@ -2523,12 +2581,21 @@ def eval_val_ttt_phased(h, base_model, device, val_data, forward_ttt_train):
                     byte_sum,
                     token_count,
                 )
+            # Corrector: update state with scored tokens (score-before-update)
+            if correctors is not None:
+                _y_cpu = y.cpu()
+                for _b in range(bsz):
+                    if not active[_b]:
+                        continue
+                    _co, _cl = int(chunk_offsets_cpu[_b]), int(chunk_lens_cpu[_b])
+                    for _tok in _y_cpu[_b, _co:_co + _cl].tolist():
+                        correctors[_b].update(_tok)
             if needs_train:
                 activate_chunk_mask = (num_chunks_t - 1 > ci).float()
                 for gi in range(h.ttt_grad_steps):
                     if gi > 0:
                         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                            per_tok_loss = forward_ttt_train(x, y, lora=cur_lora)
+                            per_tok_loss = forward_ttt_train(x, y, lora=cur_lora, logit_bias=_logit_bias)
                     per_doc = per_tok_loss[
                         :, chunk_offset : chunk_offset + chunk_size
                     ].mean(dim=-1)
@@ -2618,6 +2685,9 @@ def eval_val_ttt_phased(h, base_model, device, val_data, forward_ttt_train):
                 ).to(device)
                 reusable_opt = _build_opt(reusable_lora)
                 global_ttt_done = True
+                if correctors is not None:
+                    for _c in correctors:
+                        _c.reset()  # SGD changed base model; stale prefix stats discarded
                 if dist.is_available() and dist.is_initialized():
                     dist.barrier()
                 if h.rank == 0:
@@ -3220,23 +3290,25 @@ def train_and_eval(h, device):
         _prepare_ttt_eval_model(ttt_model)
         scoring_model = ttt_model
 
-        def _fwd_ttt_inner(input_ids, target_ids, lora):
-            return scoring_model.forward_ttt(input_ids, target_ids, lora=lora)
+        def _fwd_ttt_inner(input_ids, target_ids, lora, logit_bias=None):
+            return scoring_model.forward_ttt(input_ids, target_ids, lora=lora, logit_bias=logit_bias)
 
         _fwd_ttt_compiled_inner = None
 
-        def _fwd_ttt(input_ids, target_ids, lora):
+        def _fwd_ttt(input_ids, target_ids, lora, logit_bias=None):
             nonlocal _fwd_ttt_compiled_inner
             if _fwd_ttt_compiled_inner is None:
                 _fwd_ttt_compiled_inner = torch.compile(_fwd_ttt_inner, dynamic=True)
-            return _fwd_ttt_compiled_inner(input_ids, target_ids, lora=lora)
+            return _fwd_ttt_compiled_inner(input_ids, target_ids, lora=lora, logit_bias=logit_bias)
 
         _ttt_debug_bypass = bool(os.environ.get("TTT_DEBUG_BYPASS"))
         if _ttt_debug_bypass:
-            def _fwd_ttt_bypass(input_ids, target_ids, lora):
+            def _fwd_ttt_bypass(input_ids, target_ids, lora, logit_bias=None):
                 logits = scoring_model.forward_logits(input_ids)
                 dummy = lora.q_loras[0].B.sum() * 0
                 logits = logits + dummy
+                if logit_bias is not None:
+                    logits = logits + logit_bias
                 bsz, sl, V = logits.shape
                 return F.cross_entropy(
                     logits.float().reshape(-1, V), target_ids.reshape(-1), reduction="none"
@@ -3249,8 +3321,10 @@ def train_and_eval(h, device):
             global BOS_ID
             if BOS_ID is None:
                 BOS_ID = 1
-            ds0 = 0
-            val_tokens_idx = val_data.val_tokens.to(torch.int32)
+            # BEGIN warmup synthetic tokens  (LEGALITY_SPEC: no val-token touch pre-eval)
+            # _warmup_gen is a device-local generator; it does NOT mutate global
+            # torch RNG state, so downstream training/eval determinism is untouched.
+            _warmup_gen = torch.Generator(device=device).manual_seed(0)
             t_warmup = time.perf_counter()
             warmup_bszes = [h.ttt_batch_size]
             for bsz in warmup_bszes:
@@ -3267,9 +3341,10 @@ def train_and_eval(h, device):
                     fused=True,
                 )
                 for ctx_len in (h.ttt_chunk_size, h.ttt_eval_seq_len):
-                    col_w = torch.arange(ctx_len + 1)
-                    idx_w = (ds0 + col_w).clamp_(max=val_data.val_tokens.numel() - 1)
-                    row_w = val_tokens_idx[idx_w].to(device=device, dtype=torch.int64)
+                    row_w = torch.randint(
+                        0, h.vocab_size, (ctx_len + 1,),
+                        device=device, dtype=torch.int64, generator=_warmup_gen,
+                    )
                     xw = row_w[:ctx_len].unsqueeze(0).expand(bsz, -1).contiguous()
                     yw = row_w[1 : ctx_len + 1].unsqueeze(0).expand(bsz, -1).contiguous()
                     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
@@ -3278,16 +3353,23 @@ def train_and_eval(h, device):
                     wo.step()
                     wo.zero_grad(set_to_none=True)
                 del wl, wo
-            del val_tokens_idx
+            # END warmup synthetic tokens
             torch.cuda.empty_cache()
             compile_elapsed = time.perf_counter() - t_warmup
             log(f"ttt_lora:compile warmup done ({compile_elapsed:.1f}s)")
         log("\nbeginning TTT eval timer")
         torch.cuda.synchronize()
         t_ttt = time.perf_counter()
+        _correctors = None
+        if h.phased_ttt_enabled and h.corrector_alpha > 0.0:
+            _orders = [int(o) for o in h.corrector_orders.split(",") if o.strip()]
+            _correctors = [PrefixNgramCorrector(h.vocab_size, h.corrector_alpha, _orders)
+                           for _ in range(h.ttt_batch_size)]
+            log(f"corrector: alpha={h.corrector_alpha} orders={_orders}")
         if h.phased_ttt_enabled:
             ttt_val_loss, ttt_val_bpb = eval_val_ttt_phased(
-                h, ttt_model, device, val_data, forward_ttt_train=fwd_ttt_compiled
+                h, ttt_model, device, val_data, forward_ttt_train=fwd_ttt_compiled,
+                correctors=_correctors
             )
         else:
             ttt_val_loss, ttt_val_bpb = eval_val_ttt_lora(

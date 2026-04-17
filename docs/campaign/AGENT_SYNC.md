@@ -272,9 +272,121 @@ GPTQ is now parked permanently for this model family. The activation function is
   - `docs/codex-memory/project-state.md`
   - `docs/codex-memory/next-session.md`
 
+## Session C Results (2026-04-15) — Corrector Skeleton + Legality Tests + Microbenchmark
+
+**Status: COMPLETE. All Session C gates cleared. Ready for Session D (RunPod eval-only).**
+
+### Deliverables
+
+| Item | Status | Notes |
+|------|--------|-------|
+| `PrefixNgramCorrector` class | Done | Lines 15-59 of `train_gpt.py` |
+| Hyperparameters (`CORRECTOR_ALPHA`, `CORRECTOR_ORDERS`) | Done | Lines 157-158 of `train_gpt.py` |
+| `forward_ttt` `logit_bias` param | Done | Line 1049, broadcast at line 1122 |
+| `eval_val_ttt_phased` corrector wiring | Done | Bias inject, update loop, SGD reset |
+| `tests/test_corrector.py` (8 legality tests) | Done | **8/8 pass** |
+| `scripts/bench_corrector_cpu.py` | Done | **GATE PASS** |
+
+### Microbenchmark Gate Result
+
+```
+B=64, V=8192, orders=[8], alpha=0.3, chunk_size=32
+get_logit_bias() + stack: 7921 μs / chunk-step
+update():                    8.0 μs / token
+Projected total overhead:   23.7s  (< 50s gate threshold)
+```
+
+### Corrector Design Notes
+
+- `[B,1,V]` bias broadcasts across sequence dim — no dense `[B,S,V]` allocation
+- Cache (`_lu`, `_lz`) invalidated on each `update()`, recomputed lazily on `get_logit_bias()`
+- Two reset points: (1) per-doc-batch (co-located with `reusable_lora.reset()`), (2) after global SGD
+- Chunk-level approximation: bias reflects state at chunk START (same for all 32 positions in chunk)
+- `torch.compile` guard specialization handles `logit_bias=None` vs `Tensor` automatically
+
+### Codex Review Findings and Resolutions (2026-04-15)
+
+| Finding | Severity | Resolution |
+|---------|----------|------------|
+| Per-batch corrector reset contradicts spec | HIGH | **Fixed** — removed lines 2521–2523; only SGD-boundary reset remains (line 2688) |
+| Chunk-static bias ≠ per-position prefix-scan | HIGH | **By design** — per-position scan requires [B,S,V] tensor or 32× GPU passes (both forbidden); LEGALITY_SPEC.md updated to document chunk-static as deliberate approximation |
+| Multi-order `+=` log-deltas ≠ plan pseudocode `=` | MEDIUM | Deferred — single-order run 1a unaffected; deviation documented; revisit if run 1b shows unexpected behavior |
+| Warmup uses real val tokens | MEDIUM | Pre-existing in #1610 base; not introduced by Session C; deferred |
+| Test suite doesn't cover chunk-level integration ordering | LOW | Tests cover class legality properties; integration coverage deferred |
+
+### Next: Session D — Eval-Only Corrector Trial
+
+Blocked on: **Gate B pass** (3-seed reproduction mean within 0.002 of published 1.07336).
+
+Once Gate B clears:
+1. Launch eval-only ablation run 1a: `CORRECTOR_ALPHA=0.3 CORRECTOR_ORDERS=8`
+2. Launch run 1b: `CORRECTOR_ALPHA=0.3 CORRECTOR_ORDERS=5,8,12`
+3. Kill criterion: all 1a–1c < 0.001 BPB gain → kill corrector, go to fallback cascade
+
+Key env vars added:
+- `CORRECTOR_ALPHA` (default `"0.0"` = corrector disabled)
+- `CORRECTOR_ORDERS` (default `"8"`, comma-sep for multi-order)
+
 ## Workspace
 
 - Local repo: `/home/amay/Work/parameter-golf`
 - Remote repo: `/netscratch/$USER/parameter-golf`
 
 Use `git clone` and `git pull` by default.
+
+## Session 1 corrector closeout — 2026-04-17
+
+Audit of the PR #1610 posterior-corrector implementation on branch
+`submission/pr1610-corrector` ground-truthed against live working-tree
+files. Two prior reviews disagreed about correctness; adjudication below.
+
+**Q1 chunk-static eval, Q2 reset semantics, Q3 multi-order formulation:
+spec-compliant, no code change.**
+- Q1: `train_gpt.py:2563-2566` computes `_logit_bias` once per chunk,
+  reused at `:2568, :2598`. `LEGALITY_SPEC.md:104-120` explicitly accepts
+  this as a deliberate legal approximation.
+- Q2: No per-batch reset; `train_gpt.py:2521-2522` comment and reset at
+  `:2689-2690` match `LEGALITY_SPEC.md:72-79` (phase-global state, SGD
+  boundary only).
+- Q3: `train_gpt.py:35` guard handles single-order and multi-order
+  identically; `CORRECTOR_ORDERS="8"` runs the loop once cleanly.
+
+**Q4 compile warmup: real bug, FIXED this session.** Warmup block in
+`train_gpt.py` previously read `val_data.val_tokens` and ran
+forward+backward+step on those tokens before the official eval timer.
+Patched to use a device-local `torch.Generator(device=device).manual_seed(0)`
+producing synthetic `torch.randint` tokens; global torch RNG state is
+untouched. Marker block `# BEGIN warmup synthetic tokens` …
+`# END warmup synthetic tokens` now brackets the region, and
+`tests/test_corrector.py::TestWarmupLegality::test_warmup_does_not_reference_val_tokens`
+pins the markers in place (9/9 tests pass).
+
+**Measurements:**
+
+| key                     | value                   |
+|-------------------------|-------------------------|
+| `head_wrapper`          | 28,616 bytes            |
+| `pre_fix_wrapper`       | 29,451 bytes (Δ HEAD +835) |
+| `post_fix_wrapper`      | 29,439 bytes (Δ HEAD +823) |
+| warmup incremental      | −12 bytes (net reduction) |
+| seed 0 headroom_after   | 2,480 bytes             |
+| seed 1 headroom_after   | 3,192 bytes             |
+| seed 2 headroom_after   | 10,372 bytes            |
+| CPU bench projection    | 26.1 s (GATE PASS, < 50 s) |
+
+The warmup fix is a net 12-byte compressed-code-size reduction vs the
+pre-fix working tree, because eliminating `val_tokens_idx`, `ds0`,
+`col_w`, and `idx_w` offsets the generator setup. Per-seed headroom
+increased, not consumed. `(pre_fix_wrapper − head_wrapper) = +835`
+exactly matches prior Codex measurement (deviation 0, within ±200 band).
+
+**Deferred** (non-blocking, flagged for downstream sessions):
+- Corrector hot-path optimization (scatter_add into logits, cached
+  `orders` tensor, batch-level bias) — CPU bench currently PASSES; only
+  needed if GPU eval shows real wall-clock pressure.
+- Committing the currently-untracked LEGALITY_SPEC.md,
+  tests/test_corrector.py, scripts/bench_corrector_cpu.py,
+  DEPENDENCY_GATE.md, and requirements.txt.
+
+**Refs**: `LEGALITY_SPEC.md:104-120, 72-79`;
+`train_gpt.py:35, 2521-2522, 2689-2690, warmup marker block`.
