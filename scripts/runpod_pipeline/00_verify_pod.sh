@@ -45,6 +45,10 @@ echo "nvidia-smi:"
 nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader
 
 # 3. Disk space >= 80 GB
+echo ""
+echo "raw df -h /workspace:"
+df -h /workspace
+echo "configured volumeInGb: ${RUNPOD_VOLUME_IN_GB:-unknown}"
 FREE_GB=$(df -BG /workspace --output=avail 2>/dev/null | tail -1 | tr -d 'G ')
 if [ "${FREE_GB:-0}" -lt 80 ]; then
     echo "ERROR: /workspace has ${FREE_GB}G free; need >= 80G" >&2

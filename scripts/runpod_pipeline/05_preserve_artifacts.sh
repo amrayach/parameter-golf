@@ -18,6 +18,23 @@ exec > >(tee -a "${RUNS_DIR}/05_preserve.log") 2>&1
 
 echo "=== Stage 5: Artifact preservation === $(date)"
 
+if [[ "${UPLOAD_TARGET}" == hf:* ]]; then
+    if [ -z "${HF_TOKEN:-}" ]; then
+        echo "ERROR: HF_TOKEN not set. Export a valid Hugging Face token before upload." >&2
+        exit 1
+    fi
+    echo "Validating HF_TOKEN before tarball creation..."
+    "${PYTHON}" - <<'PY'
+import os
+from huggingface_hub import HfApi
+
+token = os.environ["HF_TOKEN"]
+who = HfApi(token=token).whoami()
+name = who.get("name") or who.get("fullname") or "unknown-user"
+print(f"HF whoami: {name}")
+PY
+fi
+
 # Free space check before creating tarball
 FREE_GB=$(df -BG /workspace --output=avail 2>/dev/null | tail -1 | tr -d 'G ')
 [ "${FREE_GB:-0}" -lt 5 ] && { echo "ERROR: < 5G free — cannot create tarball" >&2; exit 1; }

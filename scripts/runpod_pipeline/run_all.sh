@@ -15,7 +15,20 @@ fi
 REPO_DIR="/workspace/parameter-golf"
 PIPELINE_DIR="${REPO_DIR}/scripts/runpod_pipeline"
 
-die() { echo ""; echo "PIPELINE ABORT: $*" >&2; exit 1; }
+die() {
+    local message="$1"
+    local log_file="${2:-}"
+    echo ""
+    echo "PIPELINE ABORT: ${message}" >&2
+    if [ -n "${log_file}" ] && [ -f "${log_file}" ]; then
+        sync
+        sleep 1
+        echo "" >&2
+        echo "Last 20 log lines from ${log_file}:" >&2
+        tail -20 "${log_file}" >&2 || true
+    fi
+    exit 1
+}
 
 announce() {
     echo ""
@@ -44,19 +57,19 @@ echo "Pipeline will STOP before Stage 4 for your review."
 echo ""
 
 announce "Stage 0: Pod verification"
-bash "${PIPELINE_DIR}/00_verify_pod.sh" || die "Stage 0 failed. Log: runs/00_verify_pod.log"
+bash "${PIPELINE_DIR}/00_verify_pod.sh" || die "Stage 0 failed. Log: runs/00_verify_pod.log" "runs/00_verify_pod.log"
 finish "Stage 0: OK"
 
 announce "Stage 1: Dataset download"
-bash "${PIPELINE_DIR}/01_download_data.sh" || die "Stage 1 failed. Log: runs/01_download_data.log"
+bash "${PIPELINE_DIR}/01_download_data.sh" || die "Stage 1 failed. Log: runs/01_download_data.log" "runs/01_download_data.log"
 finish "Stage 1: OK"
 
 announce "Stage 2: Gate A (seed 0 train+eval)"
-bash "${PIPELINE_DIR}/02_gate_a.sh" || die "Stage 2 failed. Log: runs/seed0_log.txt"
+bash "${PIPELINE_DIR}/02_gate_a.sh" || die "Stage 2 failed. Log: runs/seed0_log.txt" "runs/seed0_log.txt"
 finish "Stage 2: OK"
 
 announce "Stage 3: Corrector ablations (1a / 1b / 1c)"
-bash "${PIPELINE_DIR}/03_ablations.sh" || die "Stage 3 failed. Log: runs/03_ablations.log"
+bash "${PIPELINE_DIR}/03_ablations.sh" || die "Stage 3 failed. Log: runs/03_ablations.log" "runs/03_ablations.log"
 finish "Stage 3: OK"
 
 echo ""

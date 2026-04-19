@@ -6,6 +6,12 @@
 # All three seeds use the same corrector config; mean is directly comparable to PR #1610.
 set -euo pipefail
 
+if [ -z "${TMUX:-}" ] && [ "${ALLOW_NO_TMUX:-0}" != "1" ]; then
+    echo "ERROR: refusing to run without tmux. Start with: tmux new -s s3" >&2
+    echo "Override with ALLOW_NO_TMUX=1 if you really want to." >&2
+    exit 1
+fi
+
 REPO_DIR="/workspace/parameter-golf"
 TRAIN_SCRIPT="records/track_10min_16mb/2026-04-14_VarLenAttn_PhasingTTT_Corrector/train_gpt.py"
 RUNS_DIR="${REPO_DIR}/runs"
