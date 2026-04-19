@@ -31,7 +31,7 @@ Time-box:
 ## Execution scope
 
 - Use the preserved Gate-A artifact:
-  - `amay01/parameter-golf-session3-artifacts/runs/runs_20260418_2204.tar.gz`
+  - `amay01/parameter-golf-pr1610-reproduction-artifacts/runs/runs_20260418_2204.tar.gz`
   - MD5 `caf8adf63d8c80965f6671beba95d7aa`
 - Do not retrain.
 - Do not reopen the corrector lane unless the sign review proves the implementation itself was wrong.

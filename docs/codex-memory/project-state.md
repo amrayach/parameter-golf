@@ -35,7 +35,7 @@ Secondary:
 - Locked interpretation: corrector damage scaled monotonically with `α`; no tested configuration improved BPB; corrector lane is closed for this TTT-phased eval pipeline
 - Active next move: Fallback Cascade Level 1A (`clip_sigmas` + int7 embeddings), 1–2 requant-only runs, kill criterion `<0.001 BPB gain` or artifact exceeds cap
 - Artifact preservation:
-  - `amay01/parameter-golf-session3-artifacts/runs/runs_20260418_2204.tar.gz`
+  - `amay01/parameter-golf-pr1610-reproduction-artifacts/runs/runs_20260418_2204.tar.gz`
   - MD5 `caf8adf63d8c80965f6671beba95d7aa`
   - contains Gate-A checkpoint, all 3 ablation logs, summary JSONs, and provenance
 - Budget state:

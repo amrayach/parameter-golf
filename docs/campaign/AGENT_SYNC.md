@@ -31,7 +31,7 @@ Key facts:
   - productive Session 3 sub-session: `~$40` total, with `~$22` productive work and `~$18` deployment waste
   - earlier infra-thrash sub-session: `~$10.40` total, with `~$6.80` preventable waste
   - remaining RunPod credit: `$76.64` per billing page
-- Preserved artifact: `amay01/parameter-golf-session3-artifacts/runs/runs_20260418_2204.tar.gz` (MD5 `caf8adf63d8c80965f6671beba95d7aa`, `141 MB`)
+- Preserved artifact: `amay01/parameter-golf-pr1610-reproduction-artifacts/runs/runs_20260418_2204.tar.gz` (MD5 `caf8adf63d8c80965f6671beba95d7aa`, `141 MB`)
 
 Older sections below are archival context from the pre-Session-3 campaign and are superseded by the objective/result summary above unless explicitly referenced.
 
@@ -458,7 +458,7 @@ Patches in `1765afc`:
 - `05_preserve_artifacts.sh`: automatic provenance capture
   (`runs/commit_sha.txt`, `runs/hardware_info.txt`, `runs/env_fingerprint.txt`)
   written before tarball; ancestry guard on HEAD; `repo_type="model"` fix
-  to match `amay01/parameter-golf-session3-artifacts` (created as type=model,
+  to match `amay01/parameter-golf-pr1610-reproduction-artifacts` (created as type=model,
   not dataset).
 - `00_verify_pod.sh`: optional `EXPECTED_SHA` exact-pin check layered on
   the existing ancestry-only guard; opt-in via env var, non-breaking for
