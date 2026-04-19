@@ -1,5 +1,23 @@
 # RunPod Pipeline — PR #1610 + Posterior Corrector
 
+## Pre-flight Checklist
+
+- Start a `tmux` session first. `02_gate_a.sh`, `03_ablations.sh`, and `04a_gate_b.sh` now refuse to run without `tmux` unless `ALLOW_NO_TMUX=1` is set.
+- If you plan to preserve artifacts to HuggingFace, export `HF_TOKEN` and validate it before any long run:
+  ```bash
+  /opt/pg-venv/bin/python - <<'PY'
+  import os
+  from huggingface_hub import HfApi
+  print(HfApi(token=os.environ["HF_TOKEN"]).whoami())
+  PY
+  ```
+- Run `df -h /workspace` and compare it against the pod's `volumeInGb` setting. A small mounted volume at `/workspace` is a known Session 3 failure mode.
+- If `/workspace` is a small mounted volume, put cache/data/checkpoints on container disk instead:
+  - HF cache: `/root/.hf/`
+  - XDG cache: `/root/.cache/`
+  - dataset: `/root/data/`
+  - checkpoints: `/root/checkpoints/`
+
 **Branch**: `submission/pr1610-corrector`
 **Ancestry anchor**: `a33191f572430566b88c4d61badb0369e1e6f9a3` (warmup fix — verified by `00_verify_pod.sh`)
 **Session launch SHA**: `<LAUNCH_SHA>` (pinned via `EXPECTED_SHA` env var; see Block 1)
